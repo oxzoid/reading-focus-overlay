@@ -11,5 +11,3 @@ Requires:
 - AutoHotkey v1.1
 - [Gdip.ahk library](https://github.com/tariqporter/Gdip)
 
-Demo:
-![screenshot](demo.png)
