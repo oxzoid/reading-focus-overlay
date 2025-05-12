@@ -3,6 +3,7 @@
 This AHK script shows a 45° angled ruler that follows your mouse.
 - `Ctrl + Shift + R` to toggle on/off
 - `Ctrl + Shift + C` to switch color (black ↔ green)
+- - `Ctrl + Shift + B` to block left click
 - Line is offset to avoid blocking text
 - Drawn as a triangle with thicker base near the cursor
 
