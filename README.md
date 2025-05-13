@@ -7,5 +7,3 @@ This AHK script shows a 45° angled ruler that follows your mouse.
 
 Requires:
 - AutoHotkey v1.1
-- [Gdip.ahk library](https://github.com/tariqporter/Gdip)
-
