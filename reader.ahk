@@ -6,7 +6,7 @@ CoordMode, Mouse, Screen
 
 ; ── settings ─────────────────────────────────────────────
 lineColor   := 0xFF000000   ; black
-blockClicks := true         ; start in “stimulus / no‑select” mode
+blockClicks := false         ; start in “stimulus / no‑select” mode
 overlayOn   := true         ; overlay visible at launch (set false to start hidden)
 
 ; ── build overlay ───────────────────────────────────────
@@ -33,7 +33,7 @@ return
 
 ^+c::                         ; toggle colour
     if (overlayOn)
-        lineColor := (lineColor = 0xFF000000) ? 0xFF00FF00 : 0xFF000000
+        lineColor := (lineColor = 0xFF000000) ? 0xFF6CDD8F : 0xFF000000
 return
 
 ^+b::                         ; toggle click‑block mode
