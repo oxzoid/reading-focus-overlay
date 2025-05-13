@@ -18,11 +18,11 @@ OR
 2. Run `main.ahk` (or compile it into an .exe using Ahk2Exe)
 3. Use the default hotkeys:
 
-   -`Ctrl + Shift + R   = Toggle pencil overlay`
-   -`trl + Shift + B   = Toggle click block`
-   -`Ctrl + Shift + D   = Toggle screen blur`
-   -`Ctrl + Shift + F   = Toggle focus frame`
-   -`Shift + Esc        = Re-select focus area`
+-`Ctrl + Shift + R   = Toggle pencil overlay`
+-`trl + Shift + B   = Toggle click block`
+-`Ctrl + Shift + D   = Toggle screen blur`
+-`Ctrl + Shift + F   = Toggle focus frame`
+-`Shift + Esc        = Re-select focus area`
 
 How to Customize Shortcuts:
 ---------------------------
