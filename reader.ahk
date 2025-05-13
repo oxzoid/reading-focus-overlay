@@ -10,8 +10,8 @@ FileInstall 'pencil.png', pencilPath, 1
 FileInstall 'invisible-cursor.cur', cursorPath, 1
 
 maxEdge := 300
-offsetX := 0
-offsetY := 0
+offsetX := 5
+offsetY := 10
 
 global overlayOn := false
 global blockClicks := false
@@ -91,7 +91,7 @@ ToggleClickBlock() {
     SetTimer () => ToolTip('',,,1), -700
 }
 
-#HotIf blockClicks && overlayOn
+#HotIf blockClicks
 *LButton::Return
 *LButton Up::Return
 #HotIf
