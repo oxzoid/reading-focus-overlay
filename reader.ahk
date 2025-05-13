@@ -1,65 +1,83 @@
-﻿#NoEnv
-#SingleInstance, Force
-SetBatchLines, -1
-CoordMode, Mouse, Screen
-#Include Gdip.ahk
+﻿#Requires AutoHotkey v2.0
+#SingleInstance Force
+CoordMode("Mouse", "Screen")
+#Include Gdip_All.ahk            ; keep this file beside reader.ahk
 
-; ── settings ─────────────────────────────────────────────
-lineColor   := 0xFF000000   ; black
-blockClicks := false         ; start in “stimulus / no‑select” mode
-overlayOn   := true         ; overlay visible at launch (set false to start hidden)
+; ── embed pencil.png into the EXE at compile time ────────────────
+pencilPath := A_Temp '\pencil.png'
+FileInstall 'pencil.png', pencilPath, 1   ; << baked into .exe
 
-; ── build overlay ───────────────────────────────────────
-if !pToken := Gdip_Startup() {
-    MsgBox, GDI+ failed
-    ExitApp
-}
-Gui, +AlwaysOnTop -Caption +ToolWindow +HwndhGui +E0x80020  ; always click‑through
-if (overlayOn)
-    Gui, Show, w300 h300 x0 y0 NoActivate
-hbm := CreateDIBSection(300,300), hdc := CreateCompatibleDC()
-obm := SelectObject(hdc,hbm),  gfx := Gdip_GraphicsFromHDC(hdc)
-Gdip_SetSmoothingMode(gfx, 4)
-SetTimer, Draw, 10
+maxEdge := 300        ; scale longest edge
+offsetX := 10         ; shift right
+offsetY := 10         ; shift down
 
-; ── hotkeys ─────────────────────────────────────────────
-^+r::                         ; show / hide overlay (fixed)
+global overlayOn := false
+global blockClicks := false
+global hGui := 0, hdc := 0, hbm := 0, obm := 0, gfx := 0, pBmp := 0
+global sW := 0, sH := 0, pTok := 0
+
+^+r:: ToggleOverlay()
+^+b:: ToggleClickBlock()
+
+ToggleOverlay() {
+    global overlayOn, hGui, hdc, hbm, obm, gfx, pBmp, sW, sH, pTok, pencilPath, maxEdge
     overlayOn := !overlayOn
-    if (overlayOn)
-        Gui, Show, NoActivate
-    else
-        Gui, Hide
-return
+    if overlayOn {
+        if !pTok := Gdip_Startup() {
+            MsgBox 'GDI+ init failed', , 48
+            overlayOn := false
+            return
+        }
+        pBmp := Gdip_CreateBitmapFromFile(pencilPath)
+        if !pBmp {
+            MsgBox 'Embedded PNG failed to load', , 48
+            overlayOn := false
+            return
+        }
+        w := Gdip_GetImageWidth(pBmp), h := Gdip_GetImageHeight(pBmp)
+        if w > h
+            sW := maxEdge , sH := Round(maxEdge * h / w)
+        else
+            sH := maxEdge , sW := Round(maxEdge * w / h)
 
-^+c::                         ; toggle colour
-    if (overlayOn)
-        lineColor := (lineColor = 0xFF000000) ? 0xFF6CDD8F : 0xFF000000
-return
+        ov := Gui('+AlwaysOnTop -Caption +ToolWindow +E0x80020', 'Pencil')
+        ov.Show('w' sW ' h' sH ' x0 y0 NoActivate')
+        hGui := ov.Hwnd
 
-^+b::                         ; toggle click‑block mode
+        hdc := CreateCompatibleDC()
+        hbm := CreateDIBSection(sW, sH)
+        obm := SelectObject(hdc, hbm)
+        gfx := Gdip_GraphicsFromHDC(hdc)
+        Gdip_SetSmoothingMode(gfx, 4)
+
+        SetTimer Draw, 10
+    } else {
+        SetTimer Draw, 0
+        GuiFromHwnd(hGui).Hide()
+        Gdip_DisposeImage(pBmp)
+        Gdip_DeleteGraphics(gfx)
+        SelectObject(hdc, obm), DeleteObject(hbm), DeleteDC(hdc)
+        Gdip_Shutdown(pTok)
+    }
+}
+
+Draw(*) {
+    global hGui, hdc, gfx, pBmp, sW, sH, offsetX, offsetY
+    MouseGetPos &x, &y
+    Gdip_GraphicsClear(gfx)
+    DllCall('gdiplus\GdipDrawImageRect', 'ptr', gfx, 'ptr', pBmp
+        , 'float', 0, 'float', 0, 'float', sW*1.0, 'float', sH*1.0)
+    UpdateLayeredWindow(hGui, hdc, x + offsetX, y + offsetY, sW, sH)
+}
+
+ToggleClickBlock() {
+    global blockClicks
     blockClicks := !blockClicks
-    Tooltip % blockClicks ? "Clicks BLOCKED" : "Clicks PASSTHRU"
-    SetTimer, TooltipOff, -800
-return
-TooltipOff:
-    Tooltip
-return
+    ToolTip blockClicks ? 'Click‑block ON' : 'Click‑block OFF', 0, 0, 1
+    SetTimer () => ToolTip('',,,1), -700
+}
 
-; ── mouse filtering when blockClicks = true ─────────────
-#If blockClicks
+#HotIf blockClicks && overlayOn
 *LButton::Return
 *LButton Up::Return
-#If
-
-; ── draw loop ────────────────────────────────────────────
-Draw:
-    if (!overlayOn)
-        return
-    MouseGetPos, x, y
-    Gdip_GraphicsClear(gfx)
-    xOffset := 10, yOffset := 10
-    pPen := Gdip_CreatePen(lineColor, 5)
-    Gdip_DrawLine(gfx, pPen, 0, 0, 200, 200)
-    Gdip_DeletePen(pPen)
-    UpdateLayeredWindow(hGui, hdc, x+xOffset, y+yOffset, 300, 300)
-return
+#HotIf
