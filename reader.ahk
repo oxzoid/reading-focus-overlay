@@ -1,15 +1,17 @@
 ﻿#Requires AutoHotkey v2.0
 #SingleInstance Force
 CoordMode("Mouse", "Screen")
-#Include Gdip_All.ahk            ; keep this file beside reader.ahk
+#Include Gdip_All.ahk
 
-; ── embed pencil.png into the EXE at compile time ────────────────
+; ── FileInstall (embed both files into compiled .exe) ──────────────
 pencilPath := A_Temp '\pencil.png'
-FileInstall 'pencil.png', pencilPath, 1   ; << baked into .exe
+cursorPath := A_Temp '\invisible-cursor.cur'
+FileInstall 'pencil.png', pencilPath, 1
+FileInstall 'invisible-cursor.cur', cursorPath, 1
 
-maxEdge := 300        ; scale longest edge
-offsetX := 10         ; shift right
-offsetY := 10         ; shift down
+maxEdge := 300
+offsetX := 0
+offsetY := 0
 
 global overlayOn := false
 global blockClicks := false
@@ -20,25 +22,34 @@ global sW := 0, sH := 0, pTok := 0
 ^+b:: ToggleClickBlock()
 
 ToggleOverlay() {
-    global overlayOn, hGui, hdc, hbm, obm, gfx, pBmp, sW, sH, pTok, pencilPath, maxEdge
+    global overlayOn, hGui, hdc, hbm, obm, gfx, pBmp, sW, sH, pTok, pencilPath, cursorPath, maxEdge
     overlayOn := !overlayOn
+
     if overlayOn {
+        ; Set invisible cursor
+        hCursor := DllCall("LoadCursorFromFile", "Str", cursorPath, "Ptr")
+        if hCursor
+            DllCall("SetSystemCursor", "Ptr", hCursor, "Int", 32512)  ; OCR_NORMAL
+
+        ; Start GDI+
         if !pTok := Gdip_Startup() {
             MsgBox 'GDI+ init failed', , 48
             overlayOn := false
             return
         }
+
         pBmp := Gdip_CreateBitmapFromFile(pencilPath)
         if !pBmp {
             MsgBox 'Embedded PNG failed to load', , 48
             overlayOn := false
             return
         }
+
         w := Gdip_GetImageWidth(pBmp), h := Gdip_GetImageHeight(pBmp)
         if w > h
-            sW := maxEdge , sH := Round(maxEdge * h / w)
+            sW := maxEdge, sH := Round(maxEdge * h / w)
         else
-            sH := maxEdge , sW := Round(maxEdge * w / h)
+            sH := maxEdge, sW := Round(maxEdge * w / h)
 
         ov := Gui('+AlwaysOnTop -Caption +ToolWindow +E0x80020', 'Pencil')
         ov.Show('w' sW ' h' sH ' x0 y0 NoActivate')
@@ -58,6 +69,9 @@ ToggleOverlay() {
         Gdip_DeleteGraphics(gfx)
         SelectObject(hdc, obm), DeleteObject(hbm), DeleteDC(hdc)
         Gdip_Shutdown(pTok)
+
+        ; Restore system cursor
+        DllCall("SystemParametersInfo", "UInt", 0x57, "UInt", 0, "UInt", 0, "UInt", 0x1)
     }
 }
 
