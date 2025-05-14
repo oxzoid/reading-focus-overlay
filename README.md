@@ -50,4 +50,4 @@ Enjoy.
 Some antivirus engines may flag the compiled .exe due to use of AutoHotkey, Windows API calls (like SetSystemCursor), or file embedding (FileInstall).
 This is a known false positive with AHK scripts.
 
-To be 100% sure, you’re welcome to inspect or run the script version (focus_frame.ahk) directly, or compile it yourself using Ahk2Exe.
+To be 100% sure, you’re welcome to inspect or run the script directly, or compile it yourself using Ahk2Exe. Whole reason i made it open source
