@@ -20,7 +20,7 @@ OR
 
 - `Ctrl + Shift + R   = Toggle pencil overlay`
 - `trl + Shift + B   = Toggle click block`
-- `Ctrl + Shift + D   = Toggle screen blur`
+- `Ctrl + Shift + D   = Toggle taskbar dimming`
 - `Ctrl + Shift + F   = Toggle focus frame`
 - `Shift + Esc        = Re-select focus area`
 
