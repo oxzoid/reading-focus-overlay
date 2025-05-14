@@ -1,6 +1,6 @@
 ﻿; ──────────────────────────────────────────────────────────────
 ;  Focus‑Frame (Snipping‑Tool clone)  •  darker background
-;  build 15‑May‑2025  v4.3
+;  build 15‑May‑2025  v4.3.1
 ; ──────────────────────────────────────────────────────────────
 #Requires AutoHotkey v2.0
 #SingleInstance Force
@@ -27,7 +27,6 @@ OnMessage(0x202, Snip_LButtonUp)
 ; — Hotkeys —
 ^+F::ToggleFocusFrame()
 +Esc::ShiftEsc()
-Esc::CancelSnip()
 #HotIf clickBlock
 *LButton::Return
 *LButton Up::Return
@@ -70,7 +69,11 @@ EnterSnipMode(){
     if snipActive
         return
     snipActive := true
-    dimShown   := true
+    
+    ; Register ESC hotkey once
+    Hotkey("Esc", CancelSnip, "On")
+    
+    dimShown := true
 
     dimGui := Gui("+AlwaysOnTop -Caption +ToolWindow")
     dimGui.BackColor := "Black"
@@ -87,10 +90,12 @@ EnterSnipMode(){
     if hCur
         DllCall("SetSystemCursor","ptr",hCur,"int",32512)
 }
+
 CancelSnip(*) {
     if snipActive
         TearDownSnip("cancel")
 }
+
 Snip_LButtonDown(*) {
     global snipActive, dragStart
     if !snipActive
@@ -99,6 +104,7 @@ Snip_LButtonDown(*) {
     dragStart.x := sx, dragStart.y := sy
     return 0
 }
+
 Snip_MouseMove(*) {
     global snipActive, frameGui, dimGui, dragStart
     if !snipActive || !GetKeyState("LButton","P")
@@ -113,6 +119,7 @@ Snip_MouseMove(*) {
     UpdateDimHole(dimGui.Hwnd,x,y,w,h)
     return 0
 }
+
 Snip_LButtonUp(*) {
     global snipActive, frame, haveFrame, dimShown, dragStart
     if !snipActive
@@ -128,9 +135,14 @@ Snip_LButtonUp(*) {
     TearDownSnip("keep")
     return 0
 }
+
 TearDownSnip(mode){
     global snipActive, dimGui, frameGui
     snipActive := false
+    
+    ; Unregister the ESC hotkey when snip mode ends
+    Hotkey("Esc", CancelSnip, "Off")
+    
     DllCall("ReleaseCapture")
     DllCall("SystemParametersInfo","UInt",0x57,"UInt",0,"UInt",0,"UInt",0x1)
     if frameGui
@@ -154,12 +166,14 @@ ShowDimmer(alpha){
     WinSetTransparent(alpha, dimGui.Hwnd)
     UpdateDimHole(dimGui.Hwnd,frame.x,frame.y,frame.w,frame.h)
 }
+
 DestroyDimmer(){
     global dimGui, dimShown
     if dimGui
         dimGui.Destroy(), dimGui := 0
     dimShown := false
 }
+
 UpdateDimHole(hwnd,x,y,w,h){
     full := DllCall("CreateRectRgn","int",0,"int",0,"int",A_ScreenWidth,"int",A_ScreenHeight,"ptr")
     hole := DllCall("CreateRectRgn","int",x,"int",y,"int",x+w,"int",y+h,"ptr")
