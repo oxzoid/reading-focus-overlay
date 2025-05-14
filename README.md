@@ -23,6 +23,7 @@ OR
 - `Ctrl + Shift + D   = Toggle taskbar dimming`
 - `Ctrl + Shift + F   = Toggle focus frame`
 - `Shift + Esc        = Re-select focus area`
+- `Esc                = Leave Selection mode of focus area`
 
 How to Customize Shortcuts:
 ---------------------------
