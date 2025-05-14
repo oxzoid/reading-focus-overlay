@@ -7,7 +7,10 @@
 CoordMode "Mouse", "Screen"
 
 ; — crosshair cursor —
-crossCur := A_ScriptDir "\plus_cursor.cur"
+plusPath := A_Temp "\plus_cursor.cur"
+FileInstall "plus_cursor.cur", plusPath, 1
+crossCur := plusPath
+
 
 ; ====== CONFIG ======
 DIM_DRAG  := 120    ; overlay alpha while selecting   (0‑255; lower = lighter)
