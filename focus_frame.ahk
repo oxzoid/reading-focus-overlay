@@ -98,24 +98,34 @@ CreateToolbar() {
     
     ; Create a fresh toolbar GUI - NO WS_EX_NOACTIVATE flag to allow button clicks
     toolbarGui := Gui("+AlwaysOnTop -Caption +Owner" . dimGui.Hwnd)
-    toolbarGui.BackColor := "White"
+    toolbarGui.BackColor := "White"  ; Reverted to original color
     
     ; Add a bit of padding and border effect with drag handle
     dragArea := toolbarGui.AddText("x0 y0 w170 h24 Center", "≡  Selection Mode  ≡")
     dragArea.SetFont("s10 Bold", "Segoe UI")
     dragArea.OnEvent("Click", ToolbarDragStart)
     
-    ; Rectangle mode button (icon: □)
+    ; Rectangle mode button (icon: □) with highlighting for current mode
     rectBtn := toolbarGui.AddButton("x40 y32 w32 h32 " . (selectMode = "rectangle" ? "+Default" : ""), "□")
+    if (selectMode = "rectangle") {
+        rectBtn.Opt("+Background44AA44")  ; Green background for selected mode
+    }
     rectBtn.OnEvent("Click", SwitchToRectMode)
     
-    ; Polygon mode button (icon: ⬡)
+    ; Polygon mode button (icon: ⬡) with highlighting for current mode
     polyBtn := toolbarGui.AddButton("x80 y32 w32 h32 " . (selectMode = "polygon" ? "+Default" : ""), "⬡")
+    if (selectMode = "polygon") {
+        polyBtn.Opt("+Background44AA44")  ; Green background for selected mode
+    }
     polyBtn.OnEvent("Click", SwitchToPolyMode)
     
     ; Close button (icon: ✕)
     closeBtn := toolbarGui.AddButton("x122 y32 w32 h32", "✕")
     closeBtn.OnEvent("Click", CancelSnip)
+    
+    ; Add arrow indicators for keyboard navigation
+    arrowText := toolbarGui.AddText("x0 y64 w170 h20 Center", "1  2  3")
+    arrowText.SetFont("s9", "Segoe UI")
     
     ; Position at stored position or default top center
     if (toolbarPos.x == 0)
@@ -124,7 +134,7 @@ CreateToolbar() {
     ; Show toolbar
     toolbarVisible := true
     try {
-        toolbarGui.Show("w170 h70 x" . toolbarPos.x . " y" . toolbarPos.y)
+        toolbarGui.Show("w170 h90 x" . toolbarPos.x . " y" . toolbarPos.y)  ; Increased height to accommodate arrow text
     } catch {
         ; Handle possible show errors
         MsgBox("Failed to create toolbar")
@@ -132,27 +142,39 @@ CreateToolbar() {
 }
 
 SwitchToRectMode(*) {
-    global selectMode, toolbarGui, toolbarPos, toolbarVisible
+    global selectMode, toolbarGui, toolbarPos, toolbarVisible, polyPoints
     selectMode := "rectangle"
+    
+    ; Clear any active polygon points and lines
+    polyPoints := []
+    ClearPolyGuis()
     
     ; Show toolbar if hidden
     if (!toolbarGui || !WinExist("ahk_id " toolbarGui.Hwnd)) {
         CreateToolbar()
     } else {
+        ; Update the toolbar to show the current selected mode
+        CreateToolbar()  ; Recreate to refresh highlighting
         toolbarVisible := true
         toolbarGui.Show("NA")  ; Show without activating
     }
 }
 
 SwitchToPolyMode(*) {
-    global selectMode, toolbarGui, toolbarVisible
+    global selectMode, toolbarGui, toolbarVisible, polyPoints
     selectMode := "polygon"
+    
+    ; Clear any active polygon points and lines when switching modes
+    polyPoints := []
+    ClearPolyGuis()
     
     ; Keep toolbar visible in polygon mode too
     toolbarVisible := true
     if (!toolbarGui || !WinExist("ahk_id " toolbarGui.Hwnd)) {
         CreateToolbar()
     } else {
+        ; Update the toolbar to show the current selected mode
+        CreateToolbar()  ; Recreate to refresh highlighting
         toolbarGui.Show("NA")  ; Show without activating
     }
 }
@@ -196,6 +218,11 @@ EnterSnipMode(){
     
     ; Register ESC hotkey once
     Hotkey("Esc", CancelSnip, "On")
+    
+    ; Register number keys for mode selection
+    Hotkey("1", SwitchToRectMode, "On")
+    Hotkey("2", SwitchToPolyMode, "On")
+    Hotkey("3", CancelSnip, "On")
     
     dimShown := true
 
@@ -478,6 +505,11 @@ TearDownSnip(mode) {
     
     ; Unregister the ESC hotkey when snip mode ends
     Hotkey("Esc", CancelSnip, "Off")
+    
+    ; Unregister number keys when snip mode ends
+    Hotkey("1", SwitchToRectMode, "Off")
+    Hotkey("2", SwitchToPolyMode, "Off")
+    Hotkey("3", CancelSnip, "Off")
     
     DllCall("ReleaseCapture")
     DllCall("SystemParametersInfo", "UInt", 0x57, "UInt", 0, "UInt", 0, "UInt", 0x1)
