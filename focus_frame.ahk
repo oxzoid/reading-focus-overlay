@@ -482,8 +482,6 @@ CancelSnip(*) {
     
     ; Release the lock
     DllCall("LockWindowUpdate", "UInt", 0)
-
-
     
     TearDownSnip("cancel")
 }
