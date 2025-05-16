@@ -67,5 +67,5 @@ To be 100% sure, you're welcome to inspect or run the script directly, or compil
 ![](<https://github.com/oxzoid/reading-focus-overlay/blob/ccb5584d5956c22cc779049e43a8d4b9c8c40223/6qTwpI3Q1Y.gif>)
 
 -----------------------------------------------------------
-
+Polygon selection mode demo
 ![](<https://github.com/oxzoid/reading-focus-overlay/blob/ca896257ffe135c673048562e4a11c39264b3c9c/reading_focus_overlay_zY21JMZIbu.gif>)
