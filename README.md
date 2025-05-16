@@ -19,11 +19,23 @@ OR
 3. Use the default hotkeys:
 
 - `Ctrl + Shift + R   = Toggle pencil overlay`
-- `trl + Shift + B   = Toggle click block`
+- `Ctrl + Shift + B   = Toggle click block`
 - `Ctrl + Shift + D   = Toggle taskbar dimming`
 - `Ctrl + Shift + F   = Toggle focus frame`
 - `Shift + Esc        = Re-select focus area`
 - `Esc                = Leave Selection mode of focus area`
+
+Focus Frame Features:
+--------------------
+
+- Rectangle Mode: Select rectangular areas to focus on
+- Polygon Mode: Create custom-shaped focus areas with multiple points
+- Mode Selection: Switch between modes using the toolbar or number keys (1, 2, 3)
+- Visual Indicators: Active mode is highlighted in green
+- Keyboard Shortcuts:
+  - `1` = Switch to Rectangle mode
+  - `2` = Switch to Polygon mode
+  - `3` = Cancel selection
 
 How to Customize Shortcuts:
 ---------------------------
@@ -50,6 +62,6 @@ Enjoy.
 Some antivirus engines may flag the compiled .exe due to use of AutoHotkey, Windows API calls (like SetSystemCursor), or file embedding (FileInstall).
 This is a known false positive with AHK scripts.
 
-To be 100% sure, you’re welcome to inspect or run the script directly, or compile it yourself using Ahk2Exe. Whole reason i made it open source
+To be 100% sure, you're welcome to inspect or run the script directly, or compile it yourself using Ahk2Exe. Whole reason i made it open source
 
 ![](<https://github.com/oxzoid/reading-focus-overlay/blob/ccb5584d5956c22cc779049e43a8d4b9c8c40223/6qTwpI3Q1Y.gif>)
