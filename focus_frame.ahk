@@ -17,6 +17,8 @@ DIM_DRAG  := 120    ; overlay alpha while selecting   (0‑255; lower = lighter)
 DIM_FINAL := 225    ; overlay alpha after selection   (0‑255; higher = darker)
 
 ; ====== GLOBALS ======
+global lastClickTime := 0
+global clickThreshold := 200  ; milliseconds
 global clickBlock := false
 global haveFrame  := false, frame := {x:0,y:0,w:0,h:0}
 global dimShown := false, snipActive := false
@@ -94,6 +96,7 @@ CreateToolbar() {
             ; GUI might already be destroyed, ignore error
         }
         toolbarGui := 0
+        Sleep 20  ; Add a small delay to ensure cleanup
     }
     
     ; Create a fresh toolbar GUI - NO WS_EX_NOACTIVATE flag to allow button clicks
@@ -106,26 +109,42 @@ CreateToolbar() {
     dragArea.OnEvent("Click", ToolbarDragStart)
     
     ; Rectangle mode button (icon: □) with highlighting for current mode
-    rectBtn := toolbarGui.AddButton("x40 y32 w32 h32 " . (selectMode = "rectangle" ? "+Default" : ""), "□")
-    if (selectMode = "rectangle") {
-        rectBtn.Opt("+Background44AA44")  ; Green background for selected mode
+    rectBtn := toolbarGui.AddButton("x40 y32 w32 h32", "□")
+    try {
+        if (selectMode = "rectangle") {
+            rectBtn.Opt("+Background44AA44")  ; Green background for selected mode
+        }
+        rectBtn.OnEvent("Click", SwitchToRectMode)
+    } catch {
+        ; Ignore any errors with control options
     }
-    rectBtn.OnEvent("Click", SwitchToRectMode)
     
     ; Polygon mode button (icon: ⬡) with highlighting for current mode
-    polyBtn := toolbarGui.AddButton("x80 y32 w32 h32 " . (selectMode = "polygon" ? "+Default" : ""), "⬡")
-    if (selectMode = "polygon") {
-        polyBtn.Opt("+Background44AA44")  ; Green background for selected mode
+    polyBtn := toolbarGui.AddButton("x80 y32 w32 h32", "⬡")
+    try {
+        if (selectMode = "polygon") {
+            polyBtn.Opt("+Background44AA44")  ; Green background for selected mode
+        }
+        polyBtn.OnEvent("Click", SwitchToPolyMode)
+    } catch {
+        ; Ignore any errors with control options
     }
-    polyBtn.OnEvent("Click", SwitchToPolyMode)
     
     ; Close button (icon: ✕)
     closeBtn := toolbarGui.AddButton("x122 y32 w32 h32", "✕")
-    closeBtn.OnEvent("Click", CancelSnip)
+    try {
+        closeBtn.OnEvent("Click", CancelSnip)
+    } catch {
+        ; Ignore any errors with control options
+    }
     
     ; Add arrow indicators for keyboard navigation
     arrowText := toolbarGui.AddText("x0 y64 w170 h20 Center", "1  2  3")
-    arrowText.SetFont("s9", "Segoe UI")
+    try {
+        arrowText.SetFont("s9", "Segoe UI")
+    } catch {
+        ; Ignore any errors with control options
+    }
     
     ; Position at stored position or default top center
     if (toolbarPos.x == 0)
@@ -137,48 +156,146 @@ CreateToolbar() {
         toolbarGui.Show("w170 h90 x" . toolbarPos.x . " y" . toolbarPos.y)  ; Increased height to accommodate arrow text
     } catch {
         ; Handle possible show errors
-        MsgBox("Failed to create toolbar")
+        ; MsgBox("Failed to create toolbar")  ; Removed MsgBox to avoid interruption
     }
 }
-
 SwitchToRectMode(*) {
     global selectMode, toolbarGui, toolbarPos, toolbarVisible, polyPoints
+    global frameGui, frame, haveFrame, dimGui
+    
+    ; Disable the event handler temporarily to prevent recursion
+    try {
+        if (IsObject(toolbarGui) && toolbarGui.Hwnd) {
+            toolbarGui.Opt("-E")  ; Disable events
+        }
+    } catch {
+        ; Ignore errors if GUI already destroyed
+    }
+    
     selectMode := "rectangle"
     
     ; Clear any active polygon points and lines
     polyPoints := []
     ClearPolyGuis()
     
-    ; Show toolbar if hidden
-    if (!toolbarGui || !WinExist("ahk_id " toolbarGui.Hwnd)) {
-        CreateToolbar()
-    } else {
-        ; Update the toolbar to show the current selected mode
+    ; Clear rectangle - more aggressive approach
+    try {
+        if (IsObject(frameGui)) {
+            try {
+                frameGui.Destroy()  ; Completely destroy the frame GUI
+            } catch {
+                ; Ignore errors if already destroyed
+            }
+        }
+    } catch {
+        ; Ignore errors if frameGui is not an object
+    }
+    
+    ; Create a fresh frameGui
+    try {
+        frameGui := Gui("+AlwaysOnTop -Caption +ToolWindow")  ; Create fresh one
+        frameGui.BackColor := "White"
+        frameGui.Show("x0 y0 w1 h1 Hide")  ; Create hidden until needed
+    } catch {
+        ; Ignore errors if creation fails
+    }
+    
+    ; Reset frame data
+    frame := {x:0, y:0, w:0, h:0}
+    haveFrame := false  ; Important: reset the frame flag
+    
+    ; Reset dimmer hole if dimmer exists
+    try {
+        if (IsObject(dimGui) && dimGui.Hwnd && WinExist("ahk_id " dimGui.Hwnd)) {
+            UpdateDimHole(dimGui.Hwnd, 0, 0, 0, 0)  ; Remove hole but keep dimmer
+        }
+    } catch {
+        ; Ignore errors if dimGui is invalid
+    }
+    
+    ; Add a delay before creating new toolbar
+    Sleep 50
+    
+    ; Show toolbar with updated mode
+    try {
         CreateToolbar()  ; Recreate to refresh highlighting
         toolbarVisible := true
-        toolbarGui.Show("NA")  ; Show without activating
+        if (IsObject(toolbarGui) && toolbarGui.Hwnd) {
+            toolbarGui.Show("NA")  ; Show without activating
+        }
+    } catch {
+        ; Ignore errors if show fails
     }
 }
 
 SwitchToPolyMode(*) {
     global selectMode, toolbarGui, toolbarVisible, polyPoints
+    global frameGui, frame, haveFrame, dimGui
+    
+    ; Disable the event handler temporarily to prevent recursion
+    try {
+        if (IsObject(toolbarGui) && toolbarGui.Hwnd) {
+            toolbarGui.Opt("-E")  ; Disable events
+        }
+    } catch {
+        ; Ignore errors if GUI already destroyed
+    }
+    
     selectMode := "polygon"
     
-    ; Clear any active polygon points and lines when switching modes
+    ; Clear any active polygon points and lines
     polyPoints := []
     ClearPolyGuis()
     
-    ; Keep toolbar visible in polygon mode too
-    toolbarVisible := true
-    if (!toolbarGui || !WinExist("ahk_id " toolbarGui.Hwnd)) {
-        CreateToolbar()
-    } else {
-        ; Update the toolbar to show the current selected mode
+    ; Clear rectangle - more aggressive approach
+    try {
+        if (IsObject(frameGui)) {
+            try {
+                frameGui.Destroy()  ; Completely destroy the frame GUI
+            } catch {
+                ; Ignore errors if already destroyed
+            }
+        }
+    } catch {
+        ; Ignore errors if frameGui is not an object
+    }
+    
+    ; Create a fresh frameGui
+    try {
+        frameGui := Gui("+AlwaysOnTop -Caption +ToolWindow")  ; Create fresh one
+        frameGui.BackColor := "White"
+        frameGui.Show("x0 y0 w1 h1 Hide")  ; Create hidden until needed
+    } catch {
+        ; Ignore errors if creation fails
+    }
+    
+    ; Reset frame data
+    frame := {x:0, y:0, w:0, h:0}
+    haveFrame := false  ; Important: reset the frame flag
+    
+    ; Reset dimmer hole if dimmer exists
+    try {
+        if (IsObject(dimGui) && dimGui.Hwnd && WinExist("ahk_id " dimGui.Hwnd)) {
+            UpdateDimHole(dimGui.Hwnd, 0, 0, 0, 0)  ; Remove hole but keep dimmer
+        }
+    } catch {
+        ; Ignore errors if dimGui is invalid
+    }
+    
+    ; Add a delay before creating new toolbar
+    Sleep 50
+    
+    ; Show toolbar with updated mode
+    try {
         CreateToolbar()  ; Recreate to refresh highlighting
-        toolbarGui.Show("NA")  ; Show without activating
+        toolbarVisible := true
+        if (IsObject(toolbarGui) && toolbarGui.Hwnd) {
+            toolbarGui.Show("NA")  ; Show without activating
+        }
+    } catch {
+        ; Ignore errors if show fails
     }
 }
-
 ToolbarDragStart(*) {
     global toolbarDragging
     toolbarDragging := true
@@ -187,10 +304,13 @@ ToolbarDragStart(*) {
 IsMouseOverToolbar() {
     global toolbarGui, toolbarVisible
     
-    if (!toolbarGui || !toolbarVisible || !WinExist("ahk_id " toolbarGui.Hwnd))
+    if (!toolbarGui || !toolbarVisible)
         return false
-    
+        
     try {
+        if (!WinExist("ahk_id " toolbarGui.Hwnd))
+            return false
+            
         ; Get toolbar position and size
         WinGetPos &tbX, &tbY, &tbW, &tbH, "ahk_id " toolbarGui.Hwnd
         
@@ -201,7 +321,7 @@ IsMouseOverToolbar() {
         return (mouseX >= tbX && mouseX <= tbX + tbW && 
                 mouseY >= tbY && mouseY <= tbY + tbH)
     } catch {
-        return false
+        return false  ; Return false on any error
     }
 }
 
@@ -247,15 +367,107 @@ EnterSnipMode(){
 }
 
 CancelSnip(*) {
-    if snipActive
-        TearDownSnip("cancel")
+    global snipActive, dimGui, frameGui, toolbarGui, polyGui
+    
+    ; Set flag first to prevent re-entry
+    if !snipActive
+        return
+    
+    ; Immediately set this to prevent further processing
+    snipActive := false
+    
+    ; Restore system cursor immediately
+    DllCall("SystemParametersInfo", "UInt", 0x57, "UInt", 0, "UInt", 0, "UInt", 0x1)
+    
+    ; Release capture to ensure the mouse is free
+    DllCall("ReleaseCapture")
+    
+    ; Unregister hotkeys
+    try {
+        Hotkey("Esc", CancelSnip, "Off")
+        Hotkey("1", SwitchToRectMode, "Off")
+        Hotkey("2", SwitchToPolyMode, "Off")
+        Hotkey("3", CancelSnip, "Off")
+    } catch {
+        ; Ignore errors if hotkeys already off
+    }
+    
+    ; Clean up polygon guides
+    ClearPolyGuis()
+    
+    ; More aggressive GUI cleanup - destroy in the correct order
+    if (toolbarGui) {
+        try {
+            WinHide("ahk_id " toolbarGui.Hwnd)  ; Hide first
+            Sleep 10
+            toolbarGui.Destroy()
+        } catch {
+            ; Ignore errors
+        }
+        toolbarGui := 0
+    }
+    
+    if (frameGui) {
+        try {
+            WinHide("ahk_id " frameGui.Hwnd)  ; Hide first
+            Sleep 10
+            frameGui.Destroy()
+        } catch {
+            ; Ignore errors
+        }
+        frameGui := 0
+    }
+    
+    if (dimGui) {
+        try {
+            WinHide("ahk_id " dimGui.Hwnd)  ; Hide first
+            Sleep 10
+            dimGui.Destroy()
+        } catch {
+            ; Ignore errors
+        }
+        dimGui := 0
+    }
+    
+    ; Reset all state variables
+    global dimShown := false
+    global toolbarVisible := false
+    global haveFrame := false
+    global frame := {x:0, y:0, w:0, h:0}
+    global polyPoints := []
+    
+    ; Force a screen refresh
+    Sleep 20
+    DllCall("UpdateWindow", "Ptr", 0)  ; Update desktop window
+    
+    ; Remove the garbage collection code that's causing the warning
+    ; since AutoHotkey v2 handles this automatically
+    
+    TearDownSnip("cancel")
 }
 
 Snip_LButtonDown(*) {
-    global snipActive, dragStart, selectMode, polyPoints, drawing, toolbarDragging, toolbarGui, inToolbarArea, toolbarVisible
+    global snipActive, dragStart, selectMode, polyPoints, drawing
+    global toolbarDragging, toolbarGui, inToolbarArea, toolbarVisible
+    global lastClickTime, clickThreshold, dimGui
+    
     if !snipActive
         return 0
-        
+    
+    ; Check for rapid clicking
+    currentTime := A_TickCount
+    clickInterval := currentTime - lastClickTime
+    lastClickTime := currentTime
+    
+    ; If clicks are too rapid, handle specially
+    if (clickInterval < clickThreshold) {
+        ; Force a small delay
+        Sleep 50
+        ; Maybe redraw the screen
+        if (IsObject(dimGui) && dimGui.Hwnd)
+            WinRedraw("ahk_id " dimGui.Hwnd)
+    }
+    
     MouseGetPos &sx, &sy
     
     ; Check if mouse is over toolbar and if toolbar is visible
@@ -305,7 +517,6 @@ Snip_LButtonDown(*) {
     }
     return 0
 }
-
 Snip_MouseMove(*) {
     global snipActive, frameGui, dimGui, dragStart, selectMode, polyPoints, drawing, toolbarDragging, toolbarGui, toolbarPos, toolbarVisible
     if !snipActive
@@ -331,9 +542,35 @@ Snip_MouseMove(*) {
         w := Abs(cx - dragStart.x), h := Abs(cy - dragStart.y)
         if (w < 2 || h < 2)
             return 0
-        frameGui.Show("x" x " y" y " w" w " h" h)
-        SetRingRegion(frameGui.Hwnd, w, h)
-        UpdateDimHole(dimGui.Hwnd, x, y, w, h)
+        
+        ; Check if frameGui is still valid
+        try {
+            if (IsObject(frameGui) && frameGui.Hwnd) {
+                frameGui.Show("x" x " y" y " w" w " h" h)
+                SetRingRegion(frameGui.Hwnd, w, h)
+            }
+        } catch {
+            ; Recreate frameGui if it's invalid
+            try {
+                frameGui := Gui("+AlwaysOnTop -Caption +ToolWindow")
+                frameGui.BackColor := "White"
+                frameGui.Show("x" x " y" y " w" w " h" h)
+                SetRingRegion(frameGui.Hwnd, w, h)
+            } catch {
+                ; If we still can't create it, just return
+                return 0
+            }
+        }
+        
+        ; Check if dimGui is still valid before updating hole
+        try {
+            if (IsObject(dimGui) && dimGui.Hwnd) {
+                UpdateDimHole(dimGui.Hwnd, x, y, w, h)
+            }
+        } catch {
+            ; If dimGui is invalid, we can't update it
+            return 0
+        }
     }
     return 0
 }
@@ -580,8 +817,48 @@ DestroyDimmer() {
 }
 
 UpdateDimHole(hwnd, x, y, w, h) {
-    full := DllCall("CreateRectRgn", "int", 0, "int", 0, "int", A_ScreenWidth, "int", A_ScreenHeight, "ptr")
-    hole := DllCall("CreateRectRgn", "int", x, "int", y, "int", x+w, "int", y+h, "ptr")
-    DllCall("CombineRgn", "ptr", full, "ptr", full, "ptr", hole, "int", 3)
-    DllCall("SetWindowRgn", "ptr", hwnd, "ptr", full, "int", true)
+    ; Local variables to track resources
+    full := 0
+    hole := 0
+    
+    ; Validate input parameters
+    if (!hwnd || !IsInteger(hwnd) || hwnd <= 0)
+        return  ; Skip if hwnd is invalid
+        
+    ; Check if the window still exists
+    if (!WinExist("ahk_id " hwnd))
+        return  ; Window doesn't exist anymore
+    
+    try {
+        ; Create full screen region
+        full := DllCall("CreateRectRgn", "int", 0, "int", 0, "int", A_ScreenWidth, "int", A_ScreenHeight, "ptr")
+        if (!full)
+            return  ; Skip if region creation failed
+            
+        ; Create hole region
+        hole := DllCall("CreateRectRgn", "int", x, "int", y, "int", x+w, "int", y+h, "ptr")
+        if (!hole) {
+            ; Clean up full region
+            DllCall("DeleteObject", "ptr", full)
+            return  ; Skip if region creation failed
+        }
+        
+        ; Combine regions to create hole
+        DllCall("CombineRgn", "ptr", full, "ptr", full, "ptr", hole, "int", 3)  ; RGN_DIFF = 3
+        
+        ; Apply region to window if it still exists
+        if (WinExist("ahk_id " hwnd))
+            DllCall("SetWindowRgn", "ptr", hwnd, "ptr", full, "int", 1)
+        else
+            DllCall("DeleteObject", "ptr", full)  ; Clean up if window gone
+        
+        ; Always clean up hole region
+        DllCall("DeleteObject", "ptr", hole)
+    } catch {
+        ; Clean up any resources that might have been created
+        if (hole)
+            DllCall("DeleteObject", "ptr", hole)
+        if (full)
+            DllCall("DeleteObject", "ptr", full)
+    }
 }
