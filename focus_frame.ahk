@@ -1,6 +1,6 @@
 ﻿; ──────────────────────────────────────────────────────────────
 ;  Focus‑Frame (Snipping‑Tool clone)  •  darker background
-;  build 16‑May‑2025  v4.5.3
+;  build 16‑May‑2025  v4.6.0
 ; ──────────────────────────────────────────────────────────────
 #Requires AutoHotkey v2.0
 #SingleInstance Force
@@ -31,6 +31,8 @@ global toolbarDragging := false
 global toolbarPos := {x:0, y:10}
 global inToolbarArea := false
 global toolbarVisible := true
+global activePolygons := []      ; Array to store multiple polygon definitions
+global isDrawingPolygon := false ; Flag for polygon drawing state
 
 ; Math helper function
 ATan2(y, x) {
@@ -48,6 +50,8 @@ OnMessage(0x202, Snip_LButtonUp)
 *LButton::Return
 *LButton Up::Return
 #HotIf
+
+; Remove the wrapper functions as they're not needed anymore
 
 ; — Thin border helper —
 SetRingRegion(hwnd, w, h, t:=2){
@@ -146,6 +150,16 @@ CreateToolbar() {
         ; Ignore any errors with control options
     }
     
+    ; Add text explaining the polygon features
+    if (selectMode = "polygon") {
+        polyInfo := toolbarGui.AddText("x5 y84 w160 h30 Center", "Enter: Add polygon | Space: Finish")
+        try {
+            polyInfo.SetFont("s8", "Segoe UI")
+        } catch {
+            ; Ignore any errors with control options
+        }
+    }
+    
     ; Position at stored position or default top center
     if (toolbarPos.x == 0)
         toolbarPos.x := A_ScreenWidth/2 - 85
@@ -153,15 +167,16 @@ CreateToolbar() {
     ; Show toolbar
     toolbarVisible := true
     try {
-        toolbarGui.Show("w170 h90 x" . toolbarPos.x . " y" . toolbarPos.y)  ; Increased height to accommodate arrow text
+        toolbarGui.Show("w170 h" (selectMode = "polygon" ? "110" : "90") " x" . toolbarPos.x . " y" . toolbarPos.y)  ; Increased height for polygon help text
     } catch {
         ; Handle possible show errors
         ; MsgBox("Failed to create toolbar")  ; Removed MsgBox to avoid interruption
     }
 }
+
 SwitchToRectMode(*) {
     global selectMode, toolbarGui, toolbarPos, toolbarVisible, polyPoints
-    global frameGui, frame, haveFrame, dimGui
+    global frameGui, frame, haveFrame, dimGui, activePolygons, snipActive
     
     ; Disable the event handler temporarily to prevent recursion
     try {
@@ -174,8 +189,14 @@ SwitchToRectMode(*) {
     
     selectMode := "rectangle"
     
+    ; Disable polygon-specific hotkeys
+    Hotkey("Enter", "Off")
+    Hotkey("Space", "Off")
+    Hotkey("Backspace", "Off")
+    
     ; Clear any active polygon points and lines
     polyPoints := []
+    activePolygons := []
     ClearPolyGuis()
     
     ; Clear rectangle - more aggressive approach
@@ -230,7 +251,7 @@ SwitchToRectMode(*) {
 
 SwitchToPolyMode(*) {
     global selectMode, toolbarGui, toolbarVisible, polyPoints
-    global frameGui, frame, haveFrame, dimGui
+    global frameGui, frame, haveFrame, dimGui, activePolygons, snipActive
     
     ; Disable the event handler temporarily to prevent recursion
     try {
@@ -243,8 +264,14 @@ SwitchToPolyMode(*) {
     
     selectMode := "polygon"
     
+    ; Explicitly register polygon-specific hotkeys
+    Hotkey("Enter", PolygonEnterKey, "On")
+    Hotkey("Space", PolygonSpaceKey, "On")
+    Hotkey("Backspace", PolygonBackspaceKey, "On")
+    
     ; Clear any active polygon points and lines
     polyPoints := []
+    activePolygons := []
     ClearPolyGuis()
     
     ; Clear rectangle - more aggressive approach
@@ -296,6 +323,23 @@ SwitchToPolyMode(*) {
         ; Ignore errors if show fails
     }
 }
+
+; Dedicated hotkey functions for polygon mode
+PolygonEnterKey(*) {
+    if (selectMode = "polygon" && snipActive)
+        FinishCurrentPolygon()
+}
+
+PolygonSpaceKey(*) {
+    if (selectMode = "polygon" && snipActive)
+        FinishAllPolygons()
+}
+
+PolygonBackspaceKey(*) {
+    if (selectMode = "polygon" && snipActive)
+        RemoveLastPolygon()
+}
+
 ToolbarDragStart(*) {
     global toolbarDragging
     toolbarDragging := true
@@ -328,12 +372,15 @@ IsMouseOverToolbar() {
 ; — Snip mode —
 EnterSnipMode(){
     global snipActive, dimGui, frameGui, dimShown, polyPoints, toolbarVisible
+    global activePolygons, selectMode
+    
     if snipActive
         return
     snipActive := true
     
-    ; Clear polygon points
+    ; Clear polygon points and active polygons
     polyPoints := []
+    activePolygons := []
     ClearPolyGuis()
     
     ; Register ESC hotkey once
@@ -343,6 +390,13 @@ EnterSnipMode(){
     Hotkey("1", SwitchToRectMode, "On")
     Hotkey("2", SwitchToPolyMode, "On")
     Hotkey("3", CancelSnip, "On")
+    
+    ; If starting in polygon mode, register those hotkeys
+    if (selectMode = "polygon") {
+        Hotkey("Enter", PolygonEnterKey, "On")
+        Hotkey("Space", PolygonSpaceKey, "On")
+        Hotkey("Backspace", PolygonBackspaceKey, "On")
+    }
     
     dimShown := true
 
@@ -368,6 +422,7 @@ EnterSnipMode(){
 
 CancelSnip(*) {
     global snipActive, dimGui, frameGui, toolbarGui, polyGui
+    global activePolygons
     
     ; Set flag first to prevent re-entry
     if !snipActive
@@ -375,6 +430,9 @@ CancelSnip(*) {
     
     ; Immediately set this to prevent further processing
     snipActive := false
+    
+    ; Lock updates to prevent flickering
+    DllCall("LockWindowUpdate", "UInt", A_ScreenWidth)  ; Lock entire screen
     
     ; Restore system cursor immediately
     DllCall("SystemParametersInfo", "UInt", 0x57, "UInt", 0, "UInt", 0, "UInt", 0x1)
@@ -384,50 +442,35 @@ CancelSnip(*) {
     
     ; Unregister hotkeys
     try {
-        Hotkey("Esc", CancelSnip, "Off")
-        Hotkey("1", SwitchToRectMode, "Off")
-        Hotkey("2", SwitchToPolyMode, "Off")
-        Hotkey("3", CancelSnip, "Off")
+        Hotkey("Esc", "Off")
+        Hotkey("1", "Off")
+        Hotkey("2", "Off")
+        Hotkey("3", "Off")
+        Hotkey("Enter", "Off")
+        Hotkey("Space", "Off")
+        Hotkey("Backspace", "Off")
     } catch {
         ; Ignore errors if hotkeys already off
     }
     
-    ; Clean up polygon guides
+    ; Clean up polygon guides in one go without redrawing
     ClearPolyGuis()
     
-    ; More aggressive GUI cleanup - destroy in the correct order
-    if (toolbarGui) {
-        try {
-            WinHide("ahk_id " toolbarGui.Hwnd)  ; Hide first
-            Sleep 10
-            toolbarGui.Destroy()
-        } catch {
-            ; Ignore errors
-        }
-        toolbarGui := 0
-    }
+    ; Hide GUIs first (faster than destroying them while visible)
+    if (toolbarGui)
+        try WinHide("ahk_id " toolbarGui.Hwnd)
+    if (frameGui)
+        try WinHide("ahk_id " frameGui.Hwnd)
+    if (dimGui)
+        try WinHide("ahk_id " dimGui.Hwnd)
     
-    if (frameGui) {
-        try {
-            WinHide("ahk_id " frameGui.Hwnd)  ; Hide first
-            Sleep 10
-            frameGui.Destroy()
-        } catch {
-            ; Ignore errors
-        }
-        frameGui := 0
-    }
-    
-    if (dimGui) {
-        try {
-            WinHide("ahk_id " dimGui.Hwnd)  ; Hide first
-            Sleep 10
-            dimGui.Destroy()
-        } catch {
-            ; Ignore errors
-        }
-        dimGui := 0
-    }
+    ; Now destroy them
+    if (toolbarGui)
+        try toolbarGui.Destroy(), toolbarGui := 0
+    if (frameGui)
+        try frameGui.Destroy(), frameGui := 0
+    if (dimGui)
+        try dimGui.Destroy(), dimGui := 0
     
     ; Reset all state variables
     global dimShown := false
@@ -435,13 +478,12 @@ CancelSnip(*) {
     global haveFrame := false
     global frame := {x:0, y:0, w:0, h:0}
     global polyPoints := []
+    global activePolygons := []
     
-    ; Force a screen refresh
-    Sleep 20
-    DllCall("UpdateWindow", "Ptr", 0)  ; Update desktop window
-    
-    ; Remove the garbage collection code that's causing the warning
-    ; since AutoHotkey v2 handles this automatically
+    ; Release the lock
+    DllCall("LockWindowUpdate", "UInt", 0)
+
+
     
     TearDownSnip("cancel")
 }
@@ -511,12 +553,16 @@ Snip_LButtonDown(*) {
             if (Abs(sx - startPoint.x) < 10 && Abs(sy - startPoint.y) < 10) {
                 ; Close the polygon
                 DrawLine(sx, sy, startPoint.x, startPoint.y)
-                FinishPolygon()
+                FinishCurrentPolygon()
+                
+                ; Debug message to confirm auto-close worked
+                ; MsgBox("Auto-closed polygon. Total polygons: " activePolygons.Length)
             }
         }
     }
     return 0
 }
+
 Snip_MouseMove(*) {
     global snipActive, frameGui, dimGui, dragStart, selectMode, polyPoints, drawing, toolbarDragging, toolbarGui, toolbarPos, toolbarVisible
     if !snipActive
@@ -607,7 +653,122 @@ Snip_LButtonUp(*) {
     return 0
 }
 
+; Function to finish the current polygon
+FinishCurrentPolygon() {
+    global polyPoints, activePolygons
+
+    if (dimGui)
+        	DllCall("LockWindowUpdate", "UInt", dimGui.Hwnd)
+    
+    ; If we have valid polygon, add it to collection
+    if (polyPoints.Length >= 3) {
+        ; Clone to avoid reference issues
+        activePolygons.Push(polyPoints.Clone())
+        
+        ; Create a small visual feedback
+        try {
+            SoundPlay "*-1"  ; Simple beep for feedback
+        } catch {
+            ; Ignore if sound fails
+        }
+        
+        ; Reset for next polygon
+        polyPoints := []
+        ClearPolyGuis()  ; Clear visual elements for current polygon
+        
+        ; Show all polygons created so far
+        RedrawExistingPolygons()
+        
+        ; Debug message to confirm function ran
+        ; MsgBox("Polygon finished and added to activePolygons array. Total polygons: " activePolygons.Length)
+	 DllCall("LockWindowUpdate", "UInt", 0)
+    }
+}
+
+; Function to finish all polygons and create final mask
+FinishAllPolygons() {
+    global activePolygons, polyPoints, haveFrame, dimShown
+    
+    ; If currently drawing a polygon with enough points, add it
+    if (polyPoints.Length >= 3) {
+        activePolygons.Push(polyPoints.Clone())
+        polyPoints := []
+    }
+    
+    ; Check if we have any polygons
+    if (activePolygons.Length = 0)
+        return
+    
+    ; Debug message to confirm function ran
+    ; MsgBox("FinishAllPolygons called. Total polygons: " activePolygons.Length)
+    
+    ; Create combined region for all polygons
+    CreateMultiPolygonRegion()
+    
+    ; Set flags and finish
+    haveFrame := true
+    dimShown := true
+    TearDownSnip("keep")
+}
+
+; Function to remove the last added polygon
+RemoveLastPolygon() {
+    global activePolygons, polyGui
+    
+    if (activePolygons.Length = 0)
+        return
+        
+    ; Remove last polygon from collection
+    activePolygons.Pop()
+    
+    ; Clear current polygon visuals
+    ClearPolyGuis()
+    
+    ; Redraw remaining polygons
+    RedrawExistingPolygons()
+}
+
+; Function to redraw all existing polygons
+RedrawExistingPolygons() {
+    global activePolygons, polyGui
+    
+    ; For each stored polygon, redraw its points and lines
+    for polygonIndex, polygon in activePolygons {
+        ; Skip empty polygons
+        if (polygon.Length < 3)
+            continue
+            
+        ; Different color for completed polygons (green instead of red)
+        dotColor := "Green"
+        lineColor := "Green"
+        
+        ; Draw dots for each point
+        for pointIndex, point in polygon {
+            dotGui := Gui("+AlwaysOnTop -Caption +ToolWindow")
+            dotGui.BackColor := dotColor
+            dotGui.Show("x" (point.x-3) " y" (point.y-3) " w6 h6")
+            polyGui.Push(dotGui)
+            
+            ; Draw lines between consecutive points
+            if (pointIndex > 1) {
+                prevPoint := polygon[pointIndex-1]
+                DrawColoredLine(prevPoint.x, prevPoint.y, point.x, point.y, lineColor)
+            }
+        }
+        
+        ; Close the polygon with a line from last to first point
+        firstPoint := polygon[1]
+        lastPoint := polygon[polygon.Length]
+        DrawColoredLine(lastPoint.x, lastPoint.y, firstPoint.x, firstPoint.y, lineColor)
+    }
+}
+
 DrawLine(x1, y1, x2, y2) {
+    DrawColoredLine(x1, y1, x2, y2, "Red")
+}
+
+; Colored line drawing function
+DrawColoredLine(x1, y1, x2, y2, color:="Red") {
     global polyGui
     
     ; Calculate line properties
@@ -618,7 +779,7 @@ DrawLine(x1, y1, x2, y2) {
     
     ; Create line GUI
     lineGui := Gui("+AlwaysOnTop -Caption +ToolWindow")
-    lineGui.BackColor := "Red"
+    lineGui.BackColor := color
     lineGui.Show("x" x " y" y " w" w " h" h)
     
     ; Create the line shape
@@ -666,95 +827,164 @@ DrawLine(x1, y1, x2, y2) {
     polyGui.Push(lineGui)
 }
 
-FinishPolygon() {
-    global polyPoints, frame, haveFrame, dimShown
-    
-    ; Calculate bounding box
-    minX := polyPoints[1].x, maxX := polyPoints[1].x
-    minY := polyPoints[1].y, maxY := polyPoints[1].y
-    
-    for i, point in polyPoints {
-        minX := Min(minX, point.x)
-        maxX := Max(maxX, point.x)
-        minY := Min(minY, point.y)
-        maxY := Max(maxY, point.y)
-    }
-    
-    ; Create frame from bounding box
-    frame := {x:minX, y:minY, w:maxX-minX, h:maxY-minY}
-    
-    ; Create polygon region for dimmer
-    UpdatePolygonRegion()
-    
-    haveFrame := true
-    dimShown := true
-    TearDownSnip("keep")
-}
-
-UpdatePolygonRegion() {
-    global dimGui, polyPoints
-    
-    if (!dimGui || !polyPoints.Length)
+; Create the multi-polygon region for the final selection
+CreateMultiPolygonRegion() {
+    global dimGui, activePolygons, frame
+    	
+    if (!dimGui || activePolygons.Length = 0) {
         return
+    }
+
+    ; Lock window updates to prevent flickering
+    DllCall("LockWindowUpdate", "UInt", dimGui.Hwnd)
+
+    ; Calculate combined bounding box for frame
+    minX := A_ScreenWidth, maxX := 0
+    minY := A_ScreenHeight, maxY := 0
     
-    ; Create polygon region points buffer
-    pointCount := polyPoints.Length
-    points := Buffer(8 * pointCount)  ; 8 bytes per point (4 for x, 4 for y)
+    ; Count total points and prepare arrays
+    totalPoints := 0
+    validPolygons := 0
+    pointCounts := []
     
-    ; Fill points buffer
-    for i, point in polyPoints {
-        NumPut("Int", point.x, points, (i-1)*8)
-        NumPut("Int", point.y, points, (i-1)*8+4)
+    ; First pass: count points and validate polygons
+    for i, polygon in activePolygons {
+        if (polygon.Length >= 3) {
+            pointCounts.Push(polygon.Length)
+            totalPoints += polygon.Length
+            validPolygons++
+            
+            ; Update bounding box
+            for j, point in polygon {
+                minX := Min(minX, point.x)
+                maxX := Max(maxX, point.x)
+                minY := Min(minY, point.y)
+                maxY := Max(maxY, point.y)
+            }
+        }
     }
     
-    ; Create polygon region
-    polyRgn := DllCall("CreatePolygonRgn", "Ptr", points, "Int", pointCount, "Int", 1, "Ptr")
+    if (validPolygons = 0 || totalPoints = 0) {
+        return
+    }
+    
+    ; Create a buffer for all points
+    points := Buffer(8 * totalPoints)  ; 8 bytes per point (4 for x, 4 for y)
+    
+    ; Create a buffer for polygon point counts
+    counts := Buffer(4 * validPolygons)  ; 4 bytes per count
+    
+    ; Second pass: fill buffers
+    pointIndex := 0
+    countIndex := 0
+    
+    for i, polygon in activePolygons {
+        if (polygon.Length >= 3) {
+            ; Store point count
+            NumPut("Int", polygon.Length, counts, countIndex * 4)
+            countIndex++
+            
+            ; Store points
+            for j, point in polygon {
+                NumPut("Int", point.x, points, pointIndex * 8)
+                NumPut("Int", point.y, points, pointIndex * 8 + 4)
+                pointIndex++
+            }
+        }
+    }
+    
+    ; Create poly-polygon region
+    polyRgn := DllCall("CreatePolyPolygonRgn", "Ptr", points, "Ptr", counts, "Int", validPolygons, "Int", 1, "Ptr")
+    
+    if (!polyRgn) {
+        return
+    }
     
     ; Create full screen region
     fullRgn := DllCall("CreateRectRgn", "Int", 0, "Int", 0, "Int", A_ScreenWidth, "Int", A_ScreenHeight, "Ptr")
+    if (!fullRgn) {
+        DllCall("DeleteObject", "Ptr", polyRgn)
+        return
+    }
     
-    ; Combine regions to create hole
+    ; Create the final region (inverse of the polygon region - everything OUTSIDE the polygons)
     finalRgn := DllCall("CreateRectRgn", "Int", 0, "Int", 0, "Int", 0, "Int", 0, "Ptr")
-    DllCall("CombineRgn", "Ptr", finalRgn, "Ptr", fullRgn, "Ptr", polyRgn, "Int", 3)  ; RGN_DIFF = 3
+    if (!finalRgn) {
+        DllCall("DeleteObject", "Ptr", fullRgn)
+        DllCall("DeleteObject", "Ptr", polyRgn)
+        return
+    }
     
-    ; Apply region to dimmer window
+    ; Subtract the polygon region from the full screen
+    DllCall("CombineRgn", "Ptr", finalRgn, "Ptr", fullRgn, "Ptr", polyRgn, "Int", 4)  ; RGN_DIFF = 4
+    
+    ; Apply region to the dimmer window
     DllCall("SetWindowRgn", "Ptr", dimGui.Hwnd, "Ptr", finalRgn, "Int", 1)
     
-    ; Clean up
-    DllCall("DeleteObject", "Ptr", polyRgn)
+    ; Update the frame with the calculated bounding box
+    frame := {x:minX, y:minY, w:maxX-minX, h:maxY-minY}
+    
+    ; Clean up resources - don't delete finalRgn as it's now owned by the window
     DllCall("DeleteObject", "Ptr", fullRgn)
+    DllCall("DeleteObject", "Ptr", polyRgn)
+
+; Release the lock to allow window updates again
+    DllCall("LockWindowUpdate", "UInt", 0)
 }
+
 
 ClearPolyGuis() {
     global polyGui
     
-    ; Destroy all polygon point and line GUIs
+    ; Lock window updates
+    DllCall("LockWindowUpdate", "UInt", A_ScreenWidth)
+    
+    ; Hide all GUIs first
     for i, gui in polyGui {
         if (gui)
-            gui.Destroy()
+            try WinHide("ahk_id " gui.Hwnd)
+    }
+    
+    ; Destroy all polygon GUIs
+    for i, gui in polyGui {
+        if (gui)
+            try gui.Destroy()
     }
     polyGui := []
+    
+    ; Release window updates
+    DllCall("LockWindowUpdate", "UInt", 0)
 }
+
+
 
 TearDownSnip(mode) {
     global snipActive, dimGui, frameGui, selectMode, polyGui, toolbarGui, toolbarVisible
+    global activePolygons, dimShown
+    
     snipActive := false
     
-    ; Unregister the ESC hotkey when snip mode ends
-    Hotkey("Esc", CancelSnip, "Off")
+    ; Unregister hotkeys properly by reference to the hotkey only
+    try {
+        Hotkey("Esc", "Off")
+        Hotkey("1", "Off")
+        Hotkey("2", "Off")
+        Hotkey("3", "Off")
+        Hotkey("Enter", "Off")
+        Hotkey("Space", "Off")
+        Hotkey("Backspace", "Off")
+    } catch {
+        ; Ignore errors if hotkeys already off
+    }
     
-    ; Unregister number keys when snip mode ends
-    Hotkey("1", SwitchToRectMode, "Off")
-    Hotkey("2", SwitchToPolyMode, "Off")
-    Hotkey("3", CancelSnip, "Off")
-    
+    ; Release system resources
     DllCall("ReleaseCapture")
     DllCall("SystemParametersInfo", "UInt", 0x57, "UInt", 0, "UInt", 0, "UInt", 0x1)
     
-    ; Clean up polygon guides if they exist
+    ; Clean up polygon guides
     ClearPolyGuis()
     
-    ; Hide and destroy the toolbar when exiting snip mode
+    ; Hide and destroy toolbar
     toolbarVisible := false
     if (toolbarGui) {
         try {
@@ -765,7 +995,8 @@ TearDownSnip(mode) {
         }
     }
     
-    if frameGui {
+    ; Destroy frame GUI
+    if (frameGui) {
         try {
             frameGui.Destroy()
             frameGui := 0
@@ -774,8 +1005,9 @@ TearDownSnip(mode) {
         }
     }
     
-    if mode = "cancel" {
-        if dimGui {
+    if (mode = "cancel") {
+        ; Destroy dimmer GUI on cancel
+        if (dimGui) {
             try {
                 dimGui.Destroy()
                 dimGui := 0
@@ -783,16 +1015,16 @@ TearDownSnip(mode) {
                 ; Ignore errors if GUI already destroyed
             }
         }
-        dimGui := 0
         dimShown := false
     } else {
-        ShowDimmer(DIM_FINAL)  ; darker after selection
+        ; Update dimmer to final state
+        ShowDimmer(DIM_FINAL)
     }
 }
 
 ; — Dimmer helpers —
 ShowDimmer(alpha) {
-    global dimGui, frame, selectMode, polyPoints
+    global dimGui, frame, selectMode, polyPoints, activePolygons
     
     if !dimGui {
         dimGui := Gui("+AlwaysOnTop -Caption +ToolWindow")
@@ -802,9 +1034,19 @@ ShowDimmer(alpha) {
     
     WinSetTransparent(alpha, dimGui.Hwnd)
     
-    if (selectMode = "polygon" && polyPoints.Length >= 3) {
-        UpdatePolygonRegion()
+    if (selectMode = "polygon") {
+        if (activePolygons.Length > 0) {
+            ; If we have multiple polygons, show them all
+            CreateMultiPolygonRegion()
+        } else if (polyPoints.Length >= 3) {
+            ; If we have a single polygon in progress
+            UpdatePolygonRegion()
+        } else {
+            ; Default case - no hole
+            UpdateDimHole(dimGui.Hwnd, 0, 0, 0, 0)
+        }
     } else {
+        ; Standard rectangle mode
         UpdateDimHole(dimGui.Hwnd, frame.x, frame.y, frame.w, frame.h)
     }
 }
@@ -844,7 +1086,7 @@ UpdateDimHole(hwnd, x, y, w, h) {
         }
         
         ; Combine regions to create hole
-        DllCall("CombineRgn", "ptr", full, "ptr", full, "ptr", hole, "int", 3)  ; RGN_DIFF = 3
+        DllCall("CombineRgn", "ptr", full, "ptr", full, "ptr", hole, "int", 4)  ; RGN_DIFF = 4
         
         ; Apply region to window if it still exists
         if (WinExist("ahk_id " hwnd))
@@ -861,4 +1103,38 @@ UpdateDimHole(hwnd, x, y, w, h) {
         if (full)
             DllCall("DeleteObject", "ptr", full)
     }
+}
+
+UpdatePolygonRegion() {
+    global dimGui, polyPoints
+    
+    if (!dimGui || !polyPoints.Length)
+        return
+    
+    ; Create polygon region points buffer
+    pointCount := polyPoints.Length
+    points := Buffer(8 * pointCount)  ; 8 bytes per point (4 for x, 4 for y)
+    
+    ; Fill points buffer
+    for i, point in polyPoints {
+        NumPut("Int", point.x, points, (i-1)*8)
+        NumPut("Int", point.y, points, (i-1)*8+4)
+    }
+    
+    ; Create polygon region
+    polyRgn := DllCall("CreatePolygonRgn", "Ptr", points, "Int", pointCount, "Int", 1, "Ptr")
+    
+    ; Create full screen region
+    fullRgn := DllCall("CreateRectRgn", "Int", 0, "Int", 0, "Int", A_ScreenWidth, "Int", A_ScreenHeight, "Ptr")
+    
+    ; Combine regions to create hole
+    finalRgn := DllCall("CreateRectRgn", "Int", 0, "Int", 0, "Int", 0, "Int", 0, "Ptr")
+    DllCall("CombineRgn", "Ptr", finalRgn, "Ptr", fullRgn, "Ptr", polyRgn, "Int", 4)  ; RGN_DIFF = 4
+    
+    ; Apply region to dimmer window
+    DllCall("SetWindowRgn", "Ptr", dimGui.Hwnd, "Ptr", finalRgn, "Int", 1)
+    
+    ; Clean up
+    DllCall("DeleteObject", "Ptr", polyRgn)
+    DllCall("DeleteObject", "Ptr", fullRgn)
 }
