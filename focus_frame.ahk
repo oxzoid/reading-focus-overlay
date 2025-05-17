@@ -676,9 +676,6 @@ Snip_LButtonUp(*) {
 FinishCurrentPolygon() {
     global polyPoints, activePolygons, dimGui, snipActive
     
-    ; Lock window updates completely
-    DllCall("LockWindowUpdate", "UInt", DllCall("GetDesktopWindow", "Ptr"))
-    
     ; If we have valid polygon, add it to collection
     if (polyPoints.Length >= 3) {
         ; Clone to avoid reference issues
@@ -692,20 +689,14 @@ FinishCurrentPolygon() {
         
         ; Redraw existing polygons in a single operation
         RedrawExistingPolygons()
-        
-        ; Update the hole in the dimmer if it exists
-        if (dimGui && dimGui.Hwnd)
-            CreateMultiPolygonRegion()
             
         ; Important: Do NOT exit selection mode here
         ; Keep snipActive true so user can keep adding polygons
     }
-    
-    ; Release the lock
-    DllCall("LockWindowUpdate", "UInt", 0)
 }
 
 ; Function to finish all polygons and create final mask
+; 2. FinishAllPolygons function - only create the polygon holes when actually finished
 FinishAllPolygons() {
     global activePolygons, polyPoints, haveFrame, dimShown, snipActive
     
@@ -719,7 +710,7 @@ FinishAllPolygons() {
     if (activePolygons.Length = 0)
         return
     
-    ; Create combined region for all polygons
+    ; Only create the polygon holes when user presses Space to finalize
     CreateMultiPolygonRegion()
     
     ; Set flags and finish
