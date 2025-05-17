@@ -77,24 +77,49 @@ SetRingRegion(hwnd, w, h, t:=2){
 
 ; — Focus‑Frame UX —
 ToggleFocusFrame(){
-    global haveFrame, dimShown
+    global haveFrame, dimShown, snipActive
+    
     if snipActive
         return
+        
+    ; Lock updates during state changes
+    DllCall("LockWindowUpdate", "UInt", DllCall("GetDesktopWindow", "Ptr"))
+    
     if !haveFrame {
         ; Start with rectangle mode by default
         selectMode := "rectangle"
+        ; Release lock before entering snip mode, as it handles its own locking
+        DllCall("LockWindowUpdate", "UInt", 0)
         EnterSnipMode()
         return
     }
+    
     dimShown := !dimShown
-    dimShown ? ShowDimmer(DIM_FINAL) : DestroyDimmer()
+    if (dimShown) {
+        ShowDimmer(DIM_FINAL)
+    } else {
+        DestroyDimmer()
+    }
+    
+    ; Release the lock
+    DllCall("LockWindowUpdate", "UInt", 0)
 }
 
 ShiftEsc(){
+    global activePolygons, polyPoints, polyGui
+    
     if snipActive
         CancelSnip()
     else if dimShown {
         DestroyDimmer()
+        
+        ; Clear both active and in-progress polygons
+        activePolygons := []
+        polyPoints := []
+        
+        ; Clear any polygon visuals
+        ClearPolyGuis()
+        
         selectMode := "rectangle"  ; Reset to rectangle mode
         EnterSnipMode()
     }
@@ -280,7 +305,7 @@ SwitchToPolyMode(*) {
     Hotkey("Enter", PolygonEnterKey, "On")
     Hotkey("Space", PolygonSpaceKey, "On")
     Hotkey("Backspace", PolygonBackspaceKey, "On")
-    
+    Hotkey("+Backspace", ShiftBackspaceHandler, "On")
     ; Clear any active polygon points and lines
     polyPoints := []
     activePolygons := []
@@ -350,9 +375,61 @@ PolygonSpaceKey(*) {
 }
 
 PolygonBackspaceKey(*) {
+    global selectMode, snipActive
+    
+    if (selectMode = "polygon" && snipActive) {
+        ; Plain Backspace always removes the last point
+        RemoveLastPoint()
+    }
+}
+
+RemoveLastPoint(*) {
+    global polyPoints, polyGui
+    
+    ; Do nothing if there are no points in the current polygon
+    if (polyPoints.Length = 0)
+        return
+        
+    ; Lock window updates completely
+    DllCall("LockWindowUpdate", "UInt", DllCall("GetDesktopWindow", "Ptr"))
+    
+    ; Remove the last point
+    polyPoints.Pop()
+    
+    ; Clear current polygon visuals
+    ClearPolyGuis()
+    
+    ; Redraw existing completed polygons
+    RedrawExistingPolygons()
+    
+    ; Now draw the current in-progress polygon (which isn't in activePolygons)
+    if (polyPoints.Length > 0) {
+        ; Draw all points
+        for pointIndex, point in polyPoints {
+            g := Gui("+AlwaysOnTop -Caption +ToolWindow")
+            g.BackColor := "Red"
+            g.Show("x" (point.x-3) " y" (point.y-3) " w6 h6 NA")
+            polyGui.Push(g)
+        }
+        
+        ; Then draw all lines
+        for pointIndex, point in polyPoints {
+            if (pointIndex > 1) {
+                prevPoint := polyPoints[pointIndex-1]
+                DrawColoredLine(prevPoint.x, prevPoint.y, point.x, point.y, "Red")
+            }
+        }
+    }
+    
+    ; Release the lock
+    DllCall("LockWindowUpdate", "UInt", 0)
+}
+ShiftBackspaceHandler(*) {
+    global selectMode, snipActive
     if (selectMode = "polygon" && snipActive)
         RemoveLastPolygon()
 }
+
 
 ToolbarDragStart(*) {
     global toolbarDragging
@@ -407,9 +484,13 @@ EnterSnipMode(){
     
     ; If starting in polygon mode, register those hotkeys
     if (selectMode = "polygon") {
-        Hotkey("Enter", PolygonEnterKey, "On")
-        Hotkey("Space", PolygonSpaceKey, "On")
-        Hotkey("Backspace", PolygonBackspaceKey, "On")
+        ;Hotkey("Enter", PolygonEnterKey, "On")
+        ;Hotkey("Space", PolygonSpaceKey, "On")
+        ;Hotkey("Backspace", PolygonBackspaceKey, "On")
+	Hotkey("Enter", PolygonEnterKey, "On")
+    	Hotkey("Space", PolygonSpaceKey, "On")
+    	Hotkey("Backspace", RemoveLastPoint, "On")
+    	Hotkey("+Backspace", RemoveLastPolygon, "On")
     }
     
     dimShown := true
@@ -463,6 +544,7 @@ CancelSnip(*) {
         Hotkey("Enter", "Off")
         Hotkey("Space", "Off")
         Hotkey("Backspace", "Off")
+        Hotkey("+Backspace", "Off")
     } catch {
         ; Ignore errors if hotkeys already off
     }
@@ -676,6 +758,9 @@ Snip_LButtonUp(*) {
 FinishCurrentPolygon() {
     global polyPoints, activePolygons, dimGui, snipActive
     
+    ; Lock window updates completely to prevent flicker
+    DllCall("LockWindowUpdate", "UInt", DllCall("GetDesktopWindow", "Ptr"))
+    
     ; If we have valid polygon, add it to collection
     if (polyPoints.Length >= 3) {
         ; Clone to avoid reference issues
@@ -684,15 +769,15 @@ FinishCurrentPolygon() {
         ; Reset for next polygon
         polyPoints := []
         
-        ; Efficiently clear visual elements
-        ClearPolyGuis()  
+        ; Efficiently clear visual elements without redrawing each step
+        ClearPolyGuis()
         
-        ; Redraw existing polygons in a single operation
+        ; Redraw existing polygons in a single operation without flicker
         RedrawExistingPolygons()
-            
-        ; Important: Do NOT exit selection mode here
-        ; Keep snipActive true so user can keep adding polygons
     }
+    
+    ; Release the lock to allow window updates again
+    DllCall("LockWindowUpdate", "UInt", 0)
 }
 
 ; Function to finish all polygons and create final mask
@@ -722,7 +807,7 @@ FinishAllPolygons() {
 }
 
 ; Function to remove the last added polygon
-RemoveLastPolygon() {
+RemoveLastPolygon(*) {
     global activePolygons, polyGui
     
     if (activePolygons.Length = 0)
@@ -742,8 +827,7 @@ RemoveLastPolygon() {
     
     ; Release the lock
     DllCall("LockWindowUpdate", "UInt", 0)
-}
-	
+}	
 
 RedrawExistingPolygons() {
     global activePolygons, polyGui
@@ -1118,29 +1202,36 @@ TearDownSnip(mode) {
 ShowDimmer(alpha) {
     global dimGui, frame, selectMode, polyPoints, activePolygons
     
+    ; Lock window updates at the beginning
+    DllCall("LockWindowUpdate", "UInt", DllCall("GetDesktopWindow", "Ptr"))
+    
     if !dimGui {
         dimGui := Gui("+AlwaysOnTop -Caption +ToolWindow")
         dimGui.BackColor := "Black"
         dimGui.Show("Maximize")
     }
     
+    ; Batch all operations before releasing the lock
     WinSetTransparent(alpha, dimGui.Hwnd)
     
     if (selectMode = "polygon") {
         if (activePolygons.Length > 0) {
-            ; If we have multiple polygons, show them all
-            CreateMultiPolygonRegion()
+            ; If we have multiple polygons, show them all without redrawing
+            UpdateMultiPolygonRegionNoRedraw()
         } else if (polyPoints.Length >= 3) {
             ; If we have a single polygon in progress
-            UpdatePolygonRegion()
+            UpdatePolygonRegionNoRedraw()
         } else {
             ; Default case - no hole
-            UpdateDimHole(dimGui.Hwnd, 0, 0, 0, 0)
+            UpdateDimHole(dimGui.Hwnd, 0, 0, 0, 0, false)  ; false = don't redraw yet
         }
     } else {
         ; Standard rectangle mode
-        UpdateDimHole(dimGui.Hwnd, frame.x, frame.y, frame.w, frame.h)
+        UpdateDimHole(dimGui.Hwnd, frame.x, frame.y, frame.w, frame.h, false)  ; false = don't redraw yet
     }
+    
+    ; Release the lock at the end
+    DllCall("LockWindowUpdate", "UInt", 0)
 }
 
 DestroyDimmer() {
@@ -1150,7 +1241,7 @@ DestroyDimmer() {
     dimShown := false
 }
 
-UpdateDimHole(hwnd, x, y, w, h) {
+UpdateDimHole(hwnd, x, y, w, h, redraw := true) {
     ; Local variables to track resources
     full := 0
     hole := 0
@@ -1182,7 +1273,7 @@ UpdateDimHole(hwnd, x, y, w, h) {
         
         ; Apply region to window if it still exists
         if (WinExist("ahk_id " hwnd))
-            DllCall("SetWindowRgn", "ptr", hwnd, "ptr", full, "int", 1)
+            DllCall("SetWindowRgn", "ptr", hwnd, "ptr", full, "int", redraw ? 1 : 0)  ; Only redraw if requested
         else
             DllCall("DeleteObject", "ptr", full)  ; Clean up if window gone
         
@@ -1196,7 +1287,6 @@ UpdateDimHole(hwnd, x, y, w, h) {
             DllCall("DeleteObject", "ptr", full)
     }
 }
-
 UpdatePolygonRegion() {
     global dimGui, polyPoints
     
@@ -1229,4 +1319,122 @@ UpdatePolygonRegion() {
     ; Clean up
     DllCall("DeleteObject", "Ptr", polyRgn)
     DllCall("DeleteObject", "Ptr", fullRgn)
+}
+UpdatePolygonRegionNoRedraw() {
+    global dimGui, polyPoints
+    
+    if (!dimGui || !polyPoints.Length)
+        return
+    
+    ; Create polygon region points buffer
+    pointCount := polyPoints.Length
+    points := Buffer(8 * pointCount)  ; 8 bytes per point (4 for x, 4 for y)
+    
+    ; Fill points buffer
+    for i, point in polyPoints {
+        NumPut("Int", point.x, points, (i-1)*8)
+        NumPut("Int", point.y, points, (i-1)*8+4)
+    }
+    
+    ; Create polygon region
+    polyRgn := DllCall("CreatePolygonRgn", "Ptr", points, "Int", pointCount, "Int", 1, "Ptr")
+    
+    ; Create full screen region
+    fullRgn := DllCall("CreateRectRgn", "Int", 0, "Int", 0, "Int", A_ScreenWidth, "Int", A_ScreenHeight, "Ptr")
+    
+    ; Combine regions to create hole
+    finalRgn := DllCall("CreateRectRgn", "Int", 0, "Int", 0, "Int", 0, "Int", 0, "Ptr")
+    DllCall("CombineRgn", "Ptr", finalRgn, "Ptr", fullRgn, "Ptr", polyRgn, "Int", 4)  ; RGN_DIFF = 4
+    
+    ; Apply region to dimmer window - don't force redraw (0 instead of 1)
+    DllCall("SetWindowRgn", "Ptr", dimGui.Hwnd, "Ptr", finalRgn, "Int", 0)
+    
+    ; Clean up
+    DllCall("DeleteObject", "Ptr", polyRgn)
+    DllCall("DeleteObject", "Ptr", fullRgn)
+}
+UpdateMultiPolygonRegionNoRedraw() {
+    global dimGui, activePolygons, frame
+    
+    if (!dimGui || activePolygons.Length = 0) {
+        return
+    }
+
+    ; Count total points and prepare arrays
+    totalPoints := 0
+    validPolygons := 0
+    pointCounts := []
+    
+    ; First pass: count points and validate polygons
+    for i, polygon in activePolygons {
+        if (polygon.Length >= 3) {
+            pointCounts.Push(polygon.Length)
+            totalPoints += polygon.Length
+            validPolygons++
+            
+            ; Update bounding box (keep track for region)
+            for j, point in polygon {
+                minX := (j = 1 || point.x < minX) ? point.x : minX
+                maxX := (j = 1 || point.x > maxX) ? point.x : maxX
+                minY := (j = 1 || point.y < minY) ? point.y : minY
+                maxY := (j = 1 || point.y > maxY) ? point.y : maxY
+            }
+        }
+    }
+    
+    if (validPolygons = 0 || totalPoints = 0) {
+        return
+    }
+    
+    ; Create all necessary objects in a more efficient batch
+    points := Buffer(8 * totalPoints)
+    counts := Buffer(4 * validPolygons)
+    pointIndex := 0
+    countIndex := 0
+    
+    ; Fill buffers in one pass
+    for i, polygon in activePolygons {
+        if (polygon.Length >= 3) {
+            NumPut("Int", polygon.Length, counts, countIndex * 4)
+            countIndex++
+            
+            for j, point in polygon {
+                NumPut("Int", point.x, points, pointIndex * 8)
+                NumPut("Int", point.y, points, pointIndex * 8 + 4)
+                pointIndex++
+            }
+        }
+    }
+    
+    ; Create regions and apply them in a single batch
+    polyRgn := DllCall("CreatePolyPolygonRgn", "Ptr", points, "Ptr", counts, "Int", validPolygons, "Int", 1, "Ptr")
+    if (!polyRgn) {
+        return
+    }
+    
+    fullRgn := DllCall("CreateRectRgn", "Int", 0, "Int", 0, "Int", A_ScreenWidth, "Int", A_ScreenHeight, "Ptr")
+    if (!fullRgn) {
+        DllCall("DeleteObject", "Ptr", polyRgn)
+        return
+    }
+    
+    finalRgn := DllCall("CreateRectRgn", "Int", 0, "Int", 0, "Int", 0, "Int", 0, "Ptr")
+    if (!finalRgn) {
+        DllCall("DeleteObject", "Ptr", fullRgn)
+        DllCall("DeleteObject", "Ptr", polyRgn)
+        return
+    }
+    
+    ; Make all region operations in a single batch
+    DllCall("CombineRgn", "Ptr", finalRgn, "Ptr", fullRgn, "Ptr", polyRgn, "Int", 4)
+    
+    ; Apply region without redrawing (0 instead of 1)
+    DllCall("SetWindowRgn", "Ptr", dimGui.Hwnd, "Ptr", finalRgn, "Int", 0)
+    
+    ; Update the frame with the calculated bounding box
+    frame := {x:minX, y:minY, w:maxX-minX, h:maxY-minY}
+    
+    ; Clean up resources
+    DllCall("DeleteObject", "Ptr", fullRgn)
+    DllCall("DeleteObject", "Ptr", polyRgn)
 }
