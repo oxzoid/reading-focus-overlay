@@ -367,10 +367,32 @@ PolygonEnterKey(*) {
         FinishCurrentPolygon()  ; Just finish the current polygon, don't exit selection mode
 }
 
+global polyRenderingComplete := true
+
+; Modify the PolygonSpaceKey function to check rendering status
 PolygonSpaceKey(*) {
-    global selectMode, snipActive
-    if (selectMode = "polygon" && snipActive)
-        FinishAllPolygons()  ; Finish all polygons AND exit selection mode
+    global selectMode, snipActive, polyRenderingComplete
+
+    if (selectMode = "polygon" && snipActive) {
+        if (polyRenderingComplete) {
+            FinishAllPolygons()  ; Only finish polygons if rendering is complete
+        } else {
+            ; Queue the finish action for when rendering completes
+            SetTimer FinishWhenReady, -100  ; Retry in 100ms
+        }
+    }
+}
+
+; Add a new helper function
+FinishWhenReady() {
+    global polyRenderingComplete
+
+    if (polyRenderingComplete) {
+        FinishAllPolygons()
+    } else {
+        ; Still not ready, check again shortly
+        SetTimer FinishWhenReady, -100
+    }
 }
 
 PolygonBackspaceKey(*) {
@@ -754,7 +776,10 @@ Snip_LButtonUp(*) {
 
 ; Function to finish the current polygon
 FinishCurrentPolygon() {
-    global polyPoints, activePolygons, dimGui, snipActive
+    global polyPoints, activePolygons, dimGui, snipActive, polyRenderingComplete
+
+    ; Set flag to indicate rendering in progress
+    polyRenderingComplete := false
 
     ; Lock window updates completely to prevent flicker
     DllCall("LockWindowUpdate", "UInt", DllCall("GetDesktopWindow", "Ptr"))
@@ -772,12 +797,14 @@ FinishCurrentPolygon() {
 
         ; Redraw existing polygons in a single operation without flicker
         RedrawExistingPolygons()
+    } else {
+        ; Even if we don't add a new polygon, set rendering as complete
+        polyRenderingComplete := true
     }
 
     ; Release the lock to allow window updates again
     DllCall("LockWindowUpdate", "UInt", 0)
 }
-
 ; Function to finish all polygons and create final mask
 ; 2. FinishAllPolygons function - only create the polygon holes when actually finished
 FinishAllPolygons() {
@@ -828,7 +855,10 @@ RemoveLastPolygon(*) {
 }
 
 RedrawExistingPolygons() {
-    global activePolygons, polyGui
+    global activePolygons, polyGui, polyRenderingComplete
+
+    ; Set flag to indicate rendering in progress
+    polyRenderingComplete := false
 
     ; Lock window updates completely
     DllCall("LockWindowUpdate", "UInt", DllCall("GetDesktopWindow", "Ptr"))
@@ -872,7 +902,11 @@ RedrawExistingPolygons() {
 
     ; Release the lock to allow window updates again
     DllCall("LockWindowUpdate", "UInt", 0)
+
+    ; Set flag to indicate rendering is complete
+    polyRenderingComplete := true
 }
+
 ; Helper function to prepare a line GUI without showing it
 PrepareLineGui(x1, y1, x2, y2, color := "Red") {
     ; Calculate line properties
