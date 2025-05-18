@@ -1,4 +1,8 @@
-﻿#Requires AutoHotkey v2.0
+﻿; ──────────────────────────────────────────────────────────────
+;  Focus‑Frame (Snipping‑Tool clone)  •  darker background
+;  build 16‑May‑2025  v4.6.0
+; ──────────────────────────────────────────────────────────────
+#Requires AutoHotkey v2.0
 #SingleInstance Force
 CoordMode "Mouse", "Screen"
 
@@ -10,7 +14,6 @@ crossCur := plusPath
 ; ====== CONFIG ======
 DIM_DRAG := 120    ; overlay alpha while selecting   (0‑255; lower = lighter)
 DIM_FINAL := 225    ; overlay alpha after selection   (0‑255; higher = darker)
-MAX_WORKER_THREADS := 4 ; Number of worker threads for parallel operations
 
 ; ====== GLOBALS ======
 global lastClickTime := 0
@@ -102,43 +105,22 @@ ToggleFocusFrame() {
 }
 
 ShiftEsc() {
-    global activePolygons, polyPoints, polyGui, snipActive, dimGui, dimShown
+    global activePolygons, polyPoints, polyGui
 
-    ; Lock updates immediately
-    DllCall("LockWindowUpdate", "UInt", DllCall("GetDesktopWindow", "Ptr"))
-
-    if snipActive {
+    if snipActive
         CancelSnip()
-    } else if dimShown {
-        ; Directly destroy dimmer with Windows API
-        if (dimGui && dimGui.Hwnd) {
-            DllCall("DestroyWindow", "Ptr", dimGui.Hwnd)
-            dimGui := 0
-        }
-        dimShown := false
+    else if dimShown {
+        DestroyDimmer()
 
-        ; Aggressively clean up polygon GUIs
-        for i, gui in polyGui {
-            if (IsObject(gui) && gui.Hwnd) {
-                DllCall("DestroyWindow", "Ptr", gui.Hwnd)
-            }
-        }
-        polyGui := []
-
-        ; Clear data structures
+        ; Clear both active and in-progress polygons
         activePolygons := []
         polyPoints := []
 
-        ; Reset the mode and restart
-        selectMode := "rectangle"
+        ; Clear any polygon visuals
+        ClearPolyGuis()
 
-        ; Release the lock before entering snip mode
-        DllCall("LockWindowUpdate", "UInt", 0)
-
+        selectMode := "rectangle"  ; Reset to rectangle mode
         EnterSnipMode()
-    } else {
-        ; Release the lock if we're not doing anything
-        DllCall("LockWindowUpdate", "UInt", 0)
     }
 }
 
@@ -421,14 +403,8 @@ RemoveLastPoint(*) {
 
     ; Now draw the current in-progress polygon (which isn't in activePolygons)
     if (polyPoints.Length > 0) {
-        ; Declare g as a variable at this scope level
-        local g, pointIndex, point, prevPoint
-
         ; Draw all points
-        loop polyPoints.Length {
-            pointIndex := A_Index
-            point := polyPoints[pointIndex]
-
+        for pointIndex, point in polyPoints {
             g := Gui("+AlwaysOnTop -Caption +ToolWindow")
             g.BackColor := "Red"
             g.Show("x" (point.x - 3) " y" (point.y - 3) " w6 h6 NA")
@@ -436,10 +412,7 @@ RemoveLastPoint(*) {
         }
 
         ; Then draw all lines
-        loop polyPoints.Length {
-            pointIndex := A_Index
-            point := polyPoints[pointIndex]
-
+        for pointIndex, point in polyPoints {
             if (pointIndex > 1) {
                 prevPoint := polyPoints[pointIndex - 1]
                 DrawColoredLine(prevPoint.x, prevPoint.y, point.x, point.y, "Red")
@@ -832,83 +805,28 @@ FinishAllPolygons() {
 }
 
 ; Function to remove the last added polygon
-global pendingPolyGui := []
-
-; Complete rewrite of polygon removal function with double-buffering
 RemoveLastPolygon(*) {
-    global activePolygons, polyGui, pendingPolyGui
+    global activePolygons, polyGui
 
     if (activePolygons.Length = 0)
         return
 
-    ; Lock ALL screen updates
+    ; Lock window updates completely
     DllCall("LockWindowUpdate", "UInt", DllCall("GetDesktopWindow", "Ptr"))
 
-    ; Remove the polygon
+    ; Remove last polygon from collection
     activePolygons.Pop()
 
-    ; Create replacement GUIs invisibly first (double-buffering)
-    pendingPolyGui := []  ; Clear pending array
+    ; Clear current polygon visuals
+    ClearPolyGuis()
 
-    ; Pre-create all new polygon visualizations WITHOUT SHOWING THEM
-    for _, polygon in activePolygons {
-        ; Create point GUIs but don't show them yet
-        for pointIndex, point in polygon {
-            g := Gui("+AlwaysOnTop -Caption +ToolWindow")
-            g.BackColor := "Green"
-            g.__position := { x: point.x - 3, y: point.y - 3, w: 6, h: 6 }
-            pendingPolyGui.Push(g)
-        }
-
-        ; Pre-calculate line GUIs
-        for pointIndex, point in polygon {
-            if (pointIndex > 1) {
-                prevPoint := polygon[pointIndex - 1]
-                lineGui := PrepareLineGui(prevPoint.x, prevPoint.y, point.x, point.y, "Green")
-                if (lineGui)
-                    pendingPolyGui.Push(lineGui)
-            }
-        }
-
-        ; Pre-calculate closing line
-        if (polygon.Length >= 3) {
-            firstPoint := polygon[1]
-            lastPoint := polygon[polygon.Length]
-            lineGui := PrepareLineGui(lastPoint.x, lastPoint.y, firstPoint.x, firstPoint.y, "Green")
-            if (lineGui)
-                pendingPolyGui.Push(lineGui)
-        }
-    }
-
-    ; Now destroy ALL existing polygon GUIs at once
-    for i, gui in polyGui {
-        if (IsObject(gui) && gui.Hwnd) {
-            DllCall("DestroyWindow", "Ptr", gui.Hwnd)
-        }
-    }
-    polyGui := []
-
-    ; Show all new GUIs in one batch (as close to simultaneous as possible)
-    for _, gui in pendingPolyGui {
-        if (gui.__position) {
-            ; For point GUIs
-            gui.Show("x" gui.__position.x " y" gui.__position.y " w" gui.__position.w " h" gui.__position.h " NA")
-        } else if (gui.Options) {
-            ; For line GUIs
-            gui.Show("x" gui.Options.x " y" gui.Options.y " w" gui.Options.w " h" gui.Options.h " NA")
-            ; Apply the region if we have one
-            if (gui.Region)
-                DllCall("SetWindowRgn", "Ptr", gui.Hwnd, "Ptr", gui.Region, "Int", 0)
-        }
-    }
-
-    ; Transfer the pending GUIs to the active collection
-    polyGui := pendingPolyGui.Clone()
-    pendingPolyGui := []
+    ; Redraw remaining polygons
+    RedrawExistingPolygons()
 
     ; Release the lock
     DllCall("LockWindowUpdate", "UInt", 0)
 }
+
 RedrawExistingPolygons() {
     global activePolygons, polyGui
 
@@ -1007,6 +925,8 @@ PrepareLineGui(x1, y1, x2, y2, color := "Red") {
     return lineGui
 }
 
+; Helper function to prepare a line GUI without showing it
+
 ; Colored line drawing function
 DrawColoredLine(x1, y1, x2, y2, color := "Red") {
     global polyGui
@@ -1068,23 +988,6 @@ DrawColoredLine(x1, y1, x2, y2, color := "Red") {
 }
 
 ; Create the multi-polygon region for the final selection
-
-; Helper function to properly redraw a window
-RedrawWindow(hwnd) {
-    ; RDW flags
-    RDW_INVALIDATE := 0x0001
-    RDW_INTERNALPAINT := 0x0002
-    RDW_ERASE := 0x0004
-    RDW_FRAME := 0x0400
-    RDW_ALLCHILDREN := 0x0080
-
-    ; Combine flags for complete redraw
-    flags := RDW_INVALIDATE | RDW_INTERNALPAINT | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN
-
-    ; Call the RedrawWindow API
-    DllCall("RedrawWindow", "Ptr", hwnd, "Ptr", 0, "Ptr", 0, "UInt", flags)
-}
-
 CreateMultiPolygonRegion() {
     global dimGui, activePolygons, frame
 
@@ -1188,6 +1091,21 @@ CreateMultiPolygonRegion() {
     ; Finally release the lock to allow window updates
     DllCall("LockWindowUpdate", "UInt", 0)
 }
+; Helper function to properly redraw a window
+RedrawWindow(hwnd) {
+    ; RDW flags
+    RDW_INVALIDATE := 0x0001
+    RDW_INTERNALPAINT := 0x0002
+    RDW_ERASE := 0x0004
+    RDW_FRAME := 0x0400
+    RDW_ALLCHILDREN := 0x0080
+
+    ; Combine flags for complete redraw
+    flags := RDW_INVALIDATE | RDW_INTERNALPAINT | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN
+
+    ; Call the RedrawWindow API
+    DllCall("RedrawWindow", "Ptr", hwnd, "Ptr", 0, "Ptr", 0, "UInt", flags)
+}
 
 ; Update ClearPolyGuis() to make deletion instantaneous
 ClearPolyGuis() {
@@ -1217,13 +1135,9 @@ TearDownSnip(mode) {
     global snipActive, dimGui, frameGui, selectMode, polyGui, toolbarGui, toolbarVisible
     global activePolygons, dimShown
 
-    ; Immediately disable active state to prevent further processing
     snipActive := false
 
-    ; Lock the entire desktop to prevent ANY visual updates
-    DllCall("LockWindowUpdate", "UInt", DllCall("GetDesktopWindow", "Ptr"))
-
-    ; Unregister hotkeys properly
+    ; Unregister hotkeys properly by reference to the hotkey only
     try {
         Hotkey("Esc", "Off")
         Hotkey("1", "Off")
@@ -1232,56 +1146,55 @@ TearDownSnip(mode) {
         Hotkey("Enter", "Off")
         Hotkey("Space", "Off")
         Hotkey("Backspace", "Off")
-        Hotkey("+Backspace", "Off")
     } catch {
+        ; Ignore errors if hotkeys already off
     }
 
     ; Release system resources
     DllCall("ReleaseCapture")
     DllCall("SystemParametersInfo", "UInt", 0x57, "UInt", 0, "UInt", 0, "UInt", 0x1)
 
-    ; OPTIMIZATION: Use direct Windows API calls to destroy windows rather than AHK's GUI methods
-    ; This is faster and more immediate than the GUI.Destroy() method
-    if (polyGui.Length > 0) {
-        for i, gui in polyGui {
-            if (IsObject(gui) && gui.Hwnd) {
-                DllCall("DestroyWindow", "Ptr", gui.Hwnd)
+    ; Clean up polygon guides
+    ClearPolyGuis()
+
+    ; Hide and destroy toolbar
+    toolbarVisible := false
+    if (toolbarGui) {
+        try {
+            toolbarGui.Destroy()
+            toolbarGui := 0
+        } catch {
+            ; Ignore errors if GUI already destroyed
+        }
+    }
+
+    ; Destroy frame GUI
+    if (frameGui) {
+        try {
+            frameGui.Destroy()
+            frameGui := 0
+        } catch {
+            ; Ignore errors if GUI already destroyed
+        }
+    }
+
+    if (mode = "cancel") {
+        ; Destroy dimmer GUI on cancel
+        if (dimGui) {
+            try {
+                dimGui.Destroy()
+                dimGui := 0
+            } catch {
+                ; Ignore errors if GUI already destroyed
             }
         }
-        polyGui := []
-    }
-
-    ; Use same direct window destruction for other GUIs
-    if (toolbarGui && toolbarGui.Hwnd) {
-        DllCall("DestroyWindow", "Ptr", toolbarGui.Hwnd)
-        toolbarGui := 0
-    }
-
-    if (frameGui && frameGui.Hwnd) {
-        DllCall("DestroyWindow", "Ptr", frameGui.Hwnd)
-        frameGui := 0
-    }
-
-    if (mode = "cancel" && dimGui && dimGui.Hwnd) {
-        DllCall("DestroyWindow", "Ptr", dimGui.Hwnd)
-        dimGui := 0
         dimShown := false
-    } else if (dimGui && dimGui.Hwnd) {
-        ; Update dimmer to final state without redrawing yet
-        WinSetTransparent(DIM_FINAL, dimGui.Hwnd)
-        dimShown := true
+    } else {
+        ; Update dimmer to final state
+        ShowDimmer(DIM_FINAL)
     }
-
-    ; Reset all state variables
-    toolbarVisible := false
-    haveFrame := false
-    frame := { x: 0, y: 0, w: 0, h: 0 }
-    polyPoints := []
-    activePolygons := []
-
-    ; Now release the lock to allow a single visual update
-    DllCall("LockWindowUpdate", "UInt", 0)
 }
+
 ; — Dimmer helpers —
 ShowDimmer(alpha) {
     global dimGui, frame, selectMode, polyPoints, activePolygons
