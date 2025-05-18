@@ -54,7 +54,8 @@ Just run the .exe from release
 - `3` = Cancel selection
 - `Enter` = Complete current polygon (in Polygon mode)
 - `Space` = Finalize all polygons and exit selection (in Polygon mode)
-- `Backspace` = Remove last added polygon (in Polygon mode)
+- `Backspace` = Remove last added line in incomplete polygon (in Polygon mode)
+- `Shift + Backspace` = Remove last added polygon (in Polygon mode)
 - `Esc` = Cancel selection and exit
 
 ## How to Customize Shortcuts
