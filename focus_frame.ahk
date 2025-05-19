@@ -467,27 +467,39 @@ PolygonBackspaceKey(*) {
 }
 
 RemoveLastPoint(*) {
-    global polyPoints, polyGui
+    global polyPoints, polyGui, activePolygons, canvasGui
 
     ; Do nothing if there are no points in the current polygon
     if (polyPoints.Length = 0)
         return
 
-    ; Lock window updates completely
-    DllCall("LockWindowUpdate", "UInt", DllCall("GetDesktopWindow", "Ptr"))
-
     ; Remove the last point
     polyPoints.Pop()
 
-    ; Clear current polygon visuals
-    ClearPolyGuis()
+    ; Only track which GUIs need to be removed (in-progress red polygon)
+    redGuis := []
 
-    ; Redraw existing completed polygons
-    RedrawExistingPolygons()
+    ; Find all the red polygon GUIs that need to be removed
+    for i, g in polyGui {
+        if (g != canvasGui && IsObject(g) && g.HasProp("Hwnd") && g.Hwnd) {
+            redGuis.Push(g)
+        }
+    }
 
-    ; Now draw the current in-progress polygon (which isn't in activePolygons)
+    ; Remove red GUIs from tracking array
+    newPolyGui := [canvasGui]
+    polyGui := newPolyGui
+
+    ; Now destroy red GUIs
+    for i, g in redGuis {
+        try g.Destroy()
+    }
+
+    ; No need to redraw green polygons - they should remain intact in canvasGui
+
+    ; Draw new in-progress polygon (red)
     if (polyPoints.Length > 0) {
-        ; Draw all points
+        ; Draw points
         for pointIndex, point in polyPoints {
             g := Gui("+AlwaysOnTop -Caption +ToolWindow")
             g.BackColor := "Red"
@@ -495,17 +507,16 @@ RemoveLastPoint(*) {
             polyGui.Push(g)
         }
 
-        ; Then draw all lines
+        ; Draw lines
         for pointIndex, point in polyPoints {
             if (pointIndex > 1) {
                 prevPoint := polyPoints[pointIndex - 1]
-                DrawColoredLine(prevPoint.x, prevPoint.y, point.x, point.y, "Red")
+                lineGui := DrawColoredLine(prevPoint.x, prevPoint.y, point.x, point.y, "Red")
+                if (lineGui)
+                    polyGui.Push(lineGui)
             }
         }
     }
-
-    ; Release the lock
-    DllCall("LockWindowUpdate", "UInt", 0)
 }
 ShiftBackspaceHandler(*) {
     global selectMode, snipActive
@@ -922,25 +933,114 @@ FinishAllPolygons() {
 
 ; Function to remove the last added polygon
 RemoveLastPolygon(*) {
-    global activePolygons, polyGui
+    global activePolygons, polyGui, canvasGui
 
     if (activePolygons.Length = 0)
         return
 
-    ; Lock window updates completely
-    DllCall("LockWindowUpdate", "UInt", DllCall("GetDesktopWindow", "Ptr"))
-
     ; Remove last polygon from collection
     activePolygons.Pop()
 
-    ; Clear current polygon visuals
-    ClearPolyGuis()
+    ; Strategy: Keep track of canvas, destroy all GUIs except canvas,
+    ; then redraw only green polygons on canvas
 
-    ; Redraw remaining polygons
-    RedrawExistingPolygons()
+    ; 1. Find and keep canvas, prepare to discard other GUIs
+    preservedCanvas := canvasGui
+    redGuis := []
 
-    ; Release the lock
-    DllCall("LockWindowUpdate", "UInt", 0)
+    for i, g in polyGui {
+        if (g != canvasGui && IsObject(g) && g.HasProp("Hwnd") && g.Hwnd) {
+            redGuis.Push(g)
+        }
+    }
+
+    ; 2. Reset polyGui array to just contain canvas
+    polyGui := [canvasGui]
+
+    ; 3. Now destroy all non-canvas GUIs
+    for i, g in redGuis {
+        try g.Destroy()
+    }
+
+    ; 4. Redraw green polygons on canvas
+    if (IsObject(canvasGui) && canvasGui.Hwnd) {
+        ; Get canvas DC for drawing
+        hdc := DllCall("GetDC", "Ptr", canvasGui.Hwnd)
+
+        ; Clear canvas
+        rect := Buffer(16)
+        NumPut("Int", 0, rect, 0)
+        NumPut("Int", 0, rect, 4)
+        NumPut("Int", A_ScreenWidth, rect, 8)
+        NumPut("Int", A_ScreenHeight, rect, 12)
+        hBrush := DllCall("CreateSolidBrush", "UInt", 0)  ; Black (transparent) brush
+        DllCall("FillRect", "Ptr", hdc, "Ptr", rect, "Ptr", hBrush)
+        DllCall("DeleteObject", "Ptr", hBrush)
+
+        ; Draw remaining green polygons
+        if (activePolygons.Length > 0) {
+            ; Create green pen for polygons
+            hGreenPen := DllCall("CreatePen", "Int", 0, "Int", 3, "UInt", 0x00FF00)
+            oldPen := DllCall("SelectObject", "Ptr", hdc, "Ptr", hGreenPen)
+            DllCall("SetBkMode", "Ptr", hdc, "Int", 1)  ; TRANSPARENT
+
+            ; Draw each polygon
+            for _, polygon in activePolygons {
+                if (polygon.Length < 3)
+                    continue
+
+                ; Draw outline
+                DllCall("MoveToEx", "Ptr", hdc, "Int", polygon[1].x, "Int", polygon[1].y, "Ptr", 0)
+
+                loop polygon.Length {
+                    DllCall("LineTo", "Ptr", hdc, "Int", polygon[A_Index].x, "Int", polygon[A_Index].y)
+                }
+
+                ; Close polygon
+                DllCall("LineTo", "Ptr", hdc, "Int", polygon[1].x, "Int", polygon[1].y)
+
+                ; Draw vertices (dots)
+                hGreenBrush := DllCall("CreateSolidBrush", "UInt", 0x00FF00)
+                oldBrush := DllCall("SelectObject", "Ptr", hdc, "Ptr", hGreenBrush)
+
+                loop polygon.Length {
+                    x := polygon[A_Index].x - 4
+                    y := polygon[A_Index].y - 4
+                    DllCall("Ellipse", "Ptr", hdc, "Int", x, "Int", y, "Int", x + 8, "Int", y + 8)
+                }
+
+                DllCall("SelectObject", "Ptr", hdc, "Ptr", oldBrush)
+                DllCall("DeleteObject", "Ptr", hGreenBrush)
+            }
+
+            ; Clean up
+            DllCall("SelectObject", "Ptr", hdc, "Ptr", oldPen)
+            DllCall("DeleteObject", "Ptr", hGreenPen)
+        }
+
+        DllCall("ReleaseDC", "Ptr", canvasGui.Hwnd, "Ptr", hdc)
+    }
+
+    ; 5. Redraw in-progress (red) polygon
+    if (polyPoints && polyPoints.Length > 0) {
+        ; Draw points
+        for pointIndex, point in polyPoints {
+            g := Gui("+AlwaysOnTop -Caption +ToolWindow")
+            g.BackColor := "Red"
+            g.Show("x" (point.x - 3) " y" (point.y - 3) " w6 h6 NA")
+            polyGui.Push(g)
+        }
+
+        ; Draw lines
+        for pointIndex, point in polyPoints {
+            if (pointIndex > 1) {
+                prevPoint := polyPoints[pointIndex - 1]
+                lineGui := DrawColoredLine(prevPoint.x, prevPoint.y, point.x, point.y, "Red")
+                if (lineGui)
+                    polyGui.Push(lineGui)
+            }
+        }
+    }
 }
 ; Initialize canvas for polygon drawing with double buffering
 InitPolygonCanvas() {
