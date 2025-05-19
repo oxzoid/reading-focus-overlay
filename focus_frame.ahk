@@ -32,6 +32,13 @@ global inToolbarArea := false
 global toolbarVisible := true
 global activePolygons := []      ; Array to store multiple polygon definitions
 global isDrawingPolygon := false ; Flag for polygon drawing state
+global canvasGui := 0        ; The GUI window that acts as our canvas
+global gdipToken := 0        ; GDI+ token for startup/shutdown
+global gdipGraphics := 0     ; Graphics object for drawing
+global canvasGui := 0
+global memHDC := 0
+global memBitmap := 0
+global oldBitmap := 0
 
 ; Math helper function
 ATan2(y, x) {
@@ -73,7 +80,62 @@ SetRingRegion(hwnd, w, h, t := 2) {
     DllCall("SetWindowRgn", "ptr", hwnd, "ptr", r, "int", true)
     DllCall("DeleteObject", "ptr", o), DllCall("DeleteObject", "ptr", i)
 }
+; Initialize GDI+ rendering system
+InitGDIPlusCanvas() {
+    global canvasGui, gdipToken, gdipGraphics
 
+    ; Start GDI+
+    gdipInput := Buffer(16, 0)
+    NumPut("UInt", 1, gdipInput, 0)  ; Version = 1
+    token := 0
+    DllCall("gdiplus\GdiplusStartup", "UPtr*", &token, "Ptr", gdipInput, "Ptr", 0)
+    gdipToken := token
+
+    ; Create canvas GUI with transparent background
+    canvasGui := Gui("+AlwaysOnTop -Caption +E0x80000 +LastFound")
+    canvasGui.BackColor := "Black"
+    WinSetTransColor("Black 255")  ; Make black fully transparent
+    canvasGui.Show("x0 y0 w" A_ScreenWidth " h" A_ScreenHeight)
+
+    ; Get device context for drawing
+    hwnd := canvasGui.Hwnd
+    hdc := DllCall("GetDC", "Ptr", hwnd)
+
+    ; Create GDI+ graphics object
+    pGraphics := 0
+    DllCall("gdiplus\GdipCreateFromHDC", "Ptr", hdc, "UPtr*", &pGraphics)
+    gdipGraphics := pGraphics
+
+    ; Set high quality rendering
+    DllCall("gdiplus\GdipSetSmoothingMode", "Ptr", pGraphics, "Int", 4)  ; Quality mode
+
+    ; Release DC after creating graphics
+    DllCall("ReleaseDC", "Ptr", hwnd, "Ptr", hdc)
+
+    return true
+}
+; Clean up GDI+ resources
+ShutdownGDIPlusCanvas() {
+    global gdipToken, gdipGraphics, canvasGui
+
+    ; Delete graphics object if it exists
+    if (gdipGraphics) {
+        DllCall("gdiplus\GdipDeleteGraphics", "Ptr", gdipGraphics)
+        gdipGraphics := 0
+    }
+
+    ; Destroy canvas GUI
+    if (canvasGui) {
+        canvasGui.Destroy()
+        canvasGui := 0
+    }
+
+    ; Shutdown GDI+
+    if (gdipToken) {
+        DllCall("gdiplus\GdiplusShutdown", "Ptr", gdipToken)
+        gdipToken := 0
+    }
+}
 ; — Focus‑Frame UX —
 ToggleFocusFrame() {
     global haveFrame, dimShown, snipActive
@@ -781,9 +843,6 @@ FinishCurrentPolygon() {
     ; Set flag to indicate rendering in progress
     polyRenderingComplete := false
 
-    ; Lock window updates completely to prevent flicker
-    DllCall("LockWindowUpdate", "UInt", DllCall("GetDesktopWindow", "Ptr"))
-
     ; If we have valid polygon, add it to collection
     if (polyPoints.Length >= 3) {
         ; Clone to avoid reference issues
@@ -792,19 +851,14 @@ FinishCurrentPolygon() {
         ; Reset for next polygon
         polyPoints := []
 
-        ; Efficiently clear visual elements without redrawing each step
-        ClearPolyGuis()
-
-        ; Redraw existing polygons in a single operation without flicker
+        ; Redraw existing polygons with GDI+
         RedrawExistingPolygons()
     } else {
         ; Even if we don't add a new polygon, set rendering as complete
         polyRenderingComplete := true
     }
-
-    ; Release the lock to allow window updates again
-    DllCall("LockWindowUpdate", "UInt", 0)
 }
+
 ; Function to finish all polygons and create final mask
 ; 2. FinishAllPolygons function - only create the polygon holes when actually finished
 FinishAllPolygons() {
@@ -853,71 +907,185 @@ RemoveLastPolygon(*) {
     ; Release the lock
     DllCall("LockWindowUpdate", "UInt", 0)
 }
+; Initialize canvas for polygon drawing with double buffering
+InitPolygonCanvas() {
+    global canvasGui, memHDC, memBitmap, oldBitmap
 
+    ; Create a transparent canvas GUI
+    canvasGui := Gui("+AlwaysOnTop -Caption +ToolWindow +Owner" . dimGui.Hwnd)
+    canvasGui.BackColor := "Black"  ; Black for transparency
+    canvasGui.Show("x0 y0 w" A_ScreenWidth " h" A_ScreenHeight " Hide")
+    WinSetTransColor("Black 255", canvasGui.Hwnd)
+    canvasGui.Show("NoActivate")
+
+    ; Initialize double-buffering resources
+    hdc := DllCall("GetDC", "Ptr", canvasGui.Hwnd)
+    memHDC := DllCall("CreateCompatibleDC", "Ptr", hdc)
+    memBitmap := DllCall("CreateCompatibleBitmap", "Ptr", hdc, "Int", A_ScreenWidth, "Int", A_ScreenHeight)
+    oldBitmap := DllCall("SelectObject", "Ptr", memHDC, "Ptr", memBitmap)
+    DllCall("ReleaseDC", "Ptr", canvasGui.Hwnd, "Ptr", hdc)
+
+    ; Clear the buffer initially
+    rect := Buffer(16)
+    NumPut("Int", 0, rect, 0)
+    NumPut("Int", 0, rect, 4)
+    NumPut("Int", A_ScreenWidth, rect, 8)
+    NumPut("Int", A_ScreenHeight, rect, 12)
+    hBrush := DllCall("CreateSolidBrush", "UInt", 0)  ; Black brush
+    DllCall("FillRect", "Ptr", memHDC, "Ptr", rect, "Ptr", hBrush)
+    DllCall("DeleteObject", "Ptr", hBrush)
+
+    ; Store in polyGui array
+    global polyGui := [canvasGui]
+
+    return true
+}
+
+; Free double-buffer resources
+ShutdownPolygonCanvas() {
+    global canvasGui, memHDC, memBitmap, oldBitmap
+
+    ; Clean up double-buffering resources
+    if (memHDC) {
+        DllCall("SelectObject", "Ptr", memHDC, "Ptr", oldBitmap)
+        DllCall("DeleteObject", "Ptr", memBitmap)
+        DllCall("DeleteDC", "Ptr", memHDC)
+        memHDC := 0
+        memBitmap := 0
+        oldBitmap := 0
+    }
+
+    ; Destroy canvas GUI
+    if (canvasGui) {
+        canvasGui.Destroy()
+        canvasGui := 0
+    }
+}
+
+; Completely redesigned RedrawExistingPolygons using double buffering
 RedrawExistingPolygons() {
-    global activePolygons, polyGui, polyRenderingComplete
+    global activePolygons, polyGui, polyRenderingComplete, canvasGui
+    global memHDC, memBitmap, oldBitmap
 
     ; Set flag to indicate rendering in progress
     polyRenderingComplete := false
 
-    ; Lock window updates completely
-    DllCall("LockWindowUpdate", "UInt", DllCall("GetDesktopWindow", "Ptr"))
-
-    ; Clear existing polygon guides first
+    ; Clear existing polygon GUIs except canvas
     ClearPolyGuis()
 
-    ; Create an array to hold all GUIs before showing them
-    pendingGuis := []
-    lineColor := "Green"
-    dotColor := "Green"
-
-    ; Loop through all polygons
-    polyCount := activePolygons.Length
-    loop polyCount {
-        polyIndex := A_Index
-        currentPoly := activePolygons[polyIndex]
-
-        ; Skip invalid polygons
-        if (currentPoly.Length < 3)
-            continue
-
-        ; Create vertices for this polygon
-        vertexCount := currentPoly.Length
-        loop vertexCount {
-            vertexIndex := A_Index
-            currentPoint := currentPoly[vertexIndex]
-
-            newDotGui := Gui("+AlwaysOnTop -Caption +ToolWindow")
-            newDotGui.BackColor := dotColor
-            newDotGui.Show("x" (currentPoint.x - 3) " y" (currentPoint.y - 3) " w6 h6 NA")
-            polyGui.Push(newDotGui)
-        }
-
-        ; Draw lines for this polygon
-        firstPoint := currentPoly[1]
-        previousPoint := firstPoint
-
-        loop vertexCount {
-            vertexIndex := A_Index
-
-            if (vertexIndex > 1) {
-                currentPoint := currentPoly[vertexIndex]
-                DrawColoredLine(previousPoint.x, previousPoint.y, currentPoint.x, currentPoint.y, lineColor)
-                previousPoint := currentPoint
-            }
-        }
-
-        ; Close the polygon
-        DrawColoredLine(previousPoint.x, previousPoint.y, firstPoint.x, firstPoint.y, lineColor)
+    ; Make sure canvas exists
+    if (!canvasGui) {
+        InitPolygonCanvas()
+    } else {
+        ; Ensure it's visible
+        canvasGui.Show("NA")
     }
 
-    ; Release the lock to allow window updates again
-    DllCall("LockWindowUpdate", "UInt", 0)
+    ; Clear memory DC with transparent black
+    width := A_ScreenWidth
+    height := A_ScreenHeight
+    rect := Buffer(16)
+    NumPut("Int", 0, rect, 0)
+    NumPut("Int", 0, rect, 4)
+    NumPut("Int", width, rect, 8)
+    NumPut("Int", height, rect, 12)
+    hBrush := DllCall("CreateSolidBrush", "UInt", 0)  ; Black brush
+    DllCall("FillRect", "Ptr", memHDC, "Ptr", rect, "Ptr", hBrush)
+    DllCall("DeleteObject", "Ptr", hBrush)
+
+    ; Create green pen (pure green)
+    hPen := DllCall("CreatePen", "Int", 0, "Int", 3, "UInt", 0x00FF00)  ; RGB - bright green, width 3
+    oldPen := DllCall("SelectObject", "Ptr", memHDC, "Ptr", hPen)
+
+    ; Set background mode to transparent
+    oldBkMode := DllCall("SetBkMode", "Ptr", memHDC, "Int", 1)  ; TRANSPARENT
+
+    ; Create green brush for dots
+    hBrush := DllCall("CreateSolidBrush", "UInt", 0x00FF00)  ; RGB - bright green
+    oldBrush := DllCall("SelectObject", "Ptr", memHDC, "Ptr", hBrush)
+
+    ; Draw all completed polygons to memory DC
+    for _, polygon in activePolygons {
+        if (polygon.Length < 3)
+            continue
+
+        ; Draw polygon outline
+        DllCall("MoveToEx", "Ptr", memHDC, "Int", polygon[1].x, "Int", polygon[1].y, "Ptr", 0)
+
+        loop polygon.Length {
+            DllCall("LineTo", "Ptr", memHDC, "Int", polygon[A_Index].x, "Int", polygon[A_Index].y)
+        }
+
+        ; Close polygon
+        DllCall("LineTo", "Ptr", memHDC, "Int", polygon[1].x, "Int", polygon[1].y)
+
+        ; Draw vertices (dots)
+        loop polygon.Length {
+            x := polygon[A_Index].x - 4
+            y := polygon[A_Index].y - 4
+            DllCall("Ellipse", "Ptr", memHDC, "Int", x, "Int", y, "Int", x + 8, "Int", y + 8)
+        }
+    }
+
+    ; Restore original GDI objects in memory DC
+    DllCall("SelectObject", "Ptr", memHDC, "Ptr", oldPen)
+    DllCall("SelectObject", "Ptr", memHDC, "Ptr", oldBrush)
+    DllCall("DeleteObject", "Ptr", hPen)
+    DllCall("DeleteObject", "Ptr", hBrush)
+
+    ; Now copy the memory DC to the window DC in one operation
+    hdc := DllCall("GetDC", "Ptr", canvasGui.Hwnd)
+    DllCall("BitBlt", "Ptr", hdc, "Int", 0, "Int", 0, "Int", width, "Int", height,
+        "Ptr", memHDC, "Int", 0, "Int", 0, "UInt", 0x00CC0020)  ; SRCCOPY
+    DllCall("ReleaseDC", "Ptr", canvasGui.Hwnd, "Ptr", hdc)
 
     ; Set flag to indicate rendering is complete
     polyRenderingComplete := true
 }
+; Helper function to update the window with alpha blending (AHK v2 version)
+UpdateLayeredWindow(hwnd) {
+    ; Get window dimensions
+    rect := Buffer(16, 0)
+    DllCall("GetClientRect", "Ptr", hwnd, "Ptr", rect)
+    width := NumGet(rect, 8, "Int")
+    height := NumGet(rect, 12, "Int")
 
+    ; Create device contexts and bitmaps
+    screenDC := DllCall("GetDC", "Ptr", 0)
+    memDC := DllCall("CreateCompatibleDC", "Ptr", screenDC)
+    hBitmap := DllCall("CreateCompatibleBitmap", "Ptr", screenDC, "Int", width, "Int", height)
+    oldBitmap := DllCall("SelectObject", "Ptr", memDC, "Ptr", hBitmap)
+
+    ; Get window DC and BitBlt content
+    windowDC := DllCall("GetDC", "Ptr", hwnd)
+    DllCall("BitBlt", "Ptr", memDC, "Int", 0, "Int", 0, "Int", width, "Int", height,
+        "Ptr", windowDC, "Int", 0, "Int", 0, "UInt", 0x00CC0020)  ; SRCCOPY
+
+    ; Create blend function
+    blendFunc := Buffer(4, 0)
+    NumPut("UChar", 0, blendFunc, 0)      ; AC_SRC_OVER
+    NumPut("UChar", 0, blendFunc, 1)      ; Reserved
+    NumPut("UChar", 255, blendFunc, 2)    ; Alpha value
+    NumPut("UChar", 1, blendFunc, 3)      ; AC_SRC_ALPHA
+
+    ; Create points for origin
+    ptSrc := Buffer(8, 0)
+    ptSize := Buffer(8, 0)
+    NumPut("UInt", width, ptSize, 0)
+    NumPut("UInt", height, ptSize, 4)
+
+    ; Update window
+    DllCall("UpdateLayeredWindow", "Ptr", hwnd, "Ptr", screenDC, "Ptr", 0,
+        "Ptr", ptSize, "Ptr", memDC, "Ptr", ptSrc, "UInt", 0,
+        "Ptr", blendFunc, "UInt", 0x00000002)  ; ULW_ALPHA
+
+    ; Clean up
+    DllCall("SelectObject", "Ptr", memDC, "Ptr", oldBitmap)
+    DllCall("DeleteObject", "Ptr", hBitmap)
+    DllCall("DeleteDC", "Ptr", memDC)
+    DllCall("ReleaseDC", "Ptr", 0, "Ptr", screenDC)
+    DllCall("ReleaseDC", "Ptr", hwnd, "Ptr", windowDC)
+}
 ; Helper function to prepare a line GUI without showing it
 PrepareLineGui(x1, y1, x2, y2, color := "Red") {
     ; Calculate line properties
@@ -1136,28 +1304,24 @@ RedrawWindow(hwnd) {
     DllCall("RedrawWindow", "Ptr", hwnd, "Ptr", 0, "Ptr", 0, "UInt", flags)
 }
 
-; Update ClearPolyGuis() to make deletion instantaneous
 ClearPolyGuis() {
-    global polyGui, dimGui
+    global polyGui, canvasGui
 
     ; If no GUIs to clear, exit early
     if (!IsObject(polyGui) || polyGui.Length < 1)
         return
 
-    ; Disable redrawing on the screen completely
-    DllCall("LockWindowUpdate", "UInt", DllCall("GetDesktopWindow", "Ptr"))
-
-    ; Batch destroy all GUIs without showing/hiding first
+    ; Keep the canvas GUI, remove others
     for i, gui in polyGui {
-        if (IsObject(gui) && gui.HasProp("Hwnd") && gui.Hwnd)
+        if (gui != canvasGui && IsObject(gui) && gui.HasProp("Hwnd") && gui.Hwnd)
             gui.Destroy()
     }
 
-    ; Reset the array
-    polyGui := []
-
-    ; Re-enable drawing at the end
-    DllCall("LockWindowUpdate", "UInt", 0)
+    ; Reset the array but keep canvas if it exists
+    if (canvasGui)
+        polyGui := [canvasGui]
+    else
+        polyGui := []
 }
 
 TearDownSnip(mode) {
@@ -1222,6 +1386,8 @@ TearDownSnip(mode) {
         ; Update dimmer to final state
         ShowDimmer(DIM_FINAL)
     }
+    ShutdownPolygonCanvas()
+
 }
 
 ; — Dimmer helpers —
