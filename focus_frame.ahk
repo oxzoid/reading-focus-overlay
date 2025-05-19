@@ -1313,8 +1313,12 @@ ClearPolyGuis() {
 
     ; Keep the canvas GUI, remove others
     for i, gui in polyGui {
-        if (gui != canvasGui && IsObject(gui) && gui.HasProp("Hwnd") && gui.Hwnd)
-            gui.Destroy()
+        try {
+            if (gui != canvasGui && IsObject(gui) && gui.HasProp("Hwnd") && gui.Hwnd)
+                gui.Destroy()
+        } catch {
+            ; Skip any GUI that causes an error
+        }
     }
 
     ; Reset the array but keep canvas if it exists
