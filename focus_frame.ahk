@@ -1043,7 +1043,7 @@ RedrawExistingPolygons() {
     polyRenderingComplete := true
 }
 ; Helper function to update the window with alpha blending (AHK v2 version)
-UpdateLayeredWindow(hwnd) {
+UpdateLayeredWindow2(hwnd) {
     ; Get window dimensions
     rect := Buffer(16, 0)
     DllCall("GetClientRect", "Ptr", hwnd, "Ptr", rect)
@@ -1075,7 +1075,7 @@ UpdateLayeredWindow(hwnd) {
     NumPut("UInt", height, ptSize, 4)
 
     ; Update window
-    DllCall("UpdateLayeredWindow", "Ptr", hwnd, "Ptr", screenDC, "Ptr", 0,
+    DllCall("UpdateLayeredWindow2", "Ptr", hwnd, "Ptr", screenDC, "Ptr", 0,
         "Ptr", ptSize, "Ptr", memDC, "Ptr", ptSrc, "UInt", 0,
         "Ptr", blendFunc, "UInt", 0x00000002)  ; ULW_ALPHA
 
