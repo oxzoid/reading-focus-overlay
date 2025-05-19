@@ -864,40 +864,51 @@ RedrawExistingPolygons() {
     DllCall("LockWindowUpdate", "UInt", DllCall("GetDesktopWindow", "Ptr"))
 
     ; Clear existing polygon guides first
-    ClearPolyGuis()  ; Just use our existing function instead
+    ClearPolyGuis()
 
-    ; Different color for completed polygons
-    dotColor := "Green"
+    ; Create an array to hold all GUIs before showing them
+    pendingGuis := []
     lineColor := "Green"
+    dotColor := "Green"
 
-    ; Process each polygon individually
-    for polygonIndex, polygon in activePolygons {
-        ; Skip empty polygons
-        if (polygon.Length < 3)
+    ; Loop through all polygons
+    polyCount := activePolygons.Length
+    loop polyCount {
+        polyIndex := A_Index
+        currentPoly := activePolygons[polyIndex]
+
+        ; Skip invalid polygons
+        if (currentPoly.Length < 3)
             continue
 
-        ; Draw all points first
-        for pointIndex, point in polygon {
-            g := Gui("+AlwaysOnTop -Caption +ToolWindow")
-            g.BackColor := dotColor
-            g.Show("x" (point.x - 3) " y" (point.y - 3) " w6 h6 NA")
-            polyGui.Push(g)
+        ; Create vertices for this polygon
+        vertexCount := currentPoly.Length
+        loop vertexCount {
+            vertexIndex := A_Index
+            currentPoint := currentPoly[vertexIndex]
+
+            newDotGui := Gui("+AlwaysOnTop -Caption +ToolWindow")
+            newDotGui.BackColor := dotColor
+            newDotGui.Show("x" (currentPoint.x - 3) " y" (currentPoint.y - 3) " w6 h6 NA")
+            polyGui.Push(newDotGui)
         }
 
-        ; Then draw all lines
-        for pointIndex, point in polygon {
-            if (pointIndex > 1) {
-                prevPoint := polygon[pointIndex - 1]
-                DrawColoredLine(prevPoint.x, prevPoint.y, point.x, point.y, lineColor)
+        ; Draw lines for this polygon
+        firstPoint := currentPoly[1]
+        previousPoint := firstPoint
+
+        loop vertexCount {
+            vertexIndex := A_Index
+
+            if (vertexIndex > 1) {
+                currentPoint := currentPoly[vertexIndex]
+                DrawColoredLine(previousPoint.x, previousPoint.y, currentPoint.x, currentPoint.y, lineColor)
+                previousPoint := currentPoint
             }
         }
 
-        ; Close the polygon with a line from last to first point
-        if (polygon.Length >= 3) {
-            firstPoint := polygon[1]
-            lastPoint := polygon[polygon.Length]
-            DrawColoredLine(lastPoint.x, lastPoint.y, firstPoint.x, firstPoint.y, lineColor)
-        }
+        ; Close the polygon
+        DrawColoredLine(previousPoint.x, previousPoint.y, firstPoint.x, firstPoint.y, lineColor)
     }
 
     ; Release the lock to allow window updates again
@@ -958,12 +969,13 @@ PrepareLineGui(x1, y1, x2, y2, color := "Red") {
 
     return lineGui
 }
-
-; Helper function to prepare a line GUI without showing it
-
 ; Colored line drawing function
 DrawColoredLine(x1, y1, x2, y2, color := "Red") {
     global polyGui
+
+    ; Skip drawing if less than 2 pixels distance (optimization)
+    if (Abs(x2 - x1) < 2 && Abs(y2 - y1) < 2)
+        return
 
     ; Calculate line properties
     w := Abs(x2 - x1) + 1
@@ -971,56 +983,39 @@ DrawColoredLine(x1, y1, x2, y2, color := "Red") {
     x := Min(x1, x2)
     y := Min(y1, y2)
 
-    ; Create line GUI
+    ; Create line GUI with transparent attributes
     lineGui := Gui("+AlwaysOnTop -Caption +ToolWindow")
     lineGui.BackColor := color
-    lineGui.Show("x" x " y" y " w" w " h" h)
+
+    ; Show first to get a handle
+    lineGui.Show("x" x " y" y " w" w " h" h " NA")
 
     ; Create the line shape
-    if (x1 != x2 || y1 != y2) {  ; Not a point
-        hDC := DllCall("GetDC", "Ptr", lineGui.Hwnd, "Ptr")
-
-        ; Calculate angle and length
+    if (x1 != x2 || y1 != y2) {
         angle := ATan2(y2 - y1, x2 - x1)
-        length := Sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
-
-        ; Create points for line region
-        thickness := 2  ; Line thickness
+        thickness := 2
         halfThick := thickness / 2
 
-        points := Buffer(8 * 4)  ; 4 points, 8 bytes each (x,y are 4 bytes each)
+        points := Buffer(8 * 4)
 
-        ; Calculate perpendicular offset
         dx := Sin(angle) * halfThick
         dy := -Cos(angle) * halfThick
 
-        ; Point 1: Start + offset
         NumPut("Int", Round(x1 - x + dx), points, 0)
         NumPut("Int", Round(y1 - y + dy), points, 4)
-
-        ; Point 2: End + offset
         NumPut("Int", Round(x2 - x + dx), points, 8)
         NumPut("Int", Round(y2 - y + dy), points, 12)
-
-        ; Point 3: End - offset
         NumPut("Int", Round(x2 - x - dx), points, 16)
         NumPut("Int", Round(y2 - y - dy), points, 20)
-
-        ; Point 4: Start - offset
         NumPut("Int", Round(x1 - x - dx), points, 24)
         NumPut("Int", Round(y1 - y - dy), points, 28)
 
-        ; Create polygon region
         hRgn := DllCall("CreatePolygonRgn", "Ptr", points, "Int", 4, "Int", 1, "Ptr")
-
-        ; Apply region to window
         DllCall("SetWindowRgn", "Ptr", lineGui.Hwnd, "Ptr", hRgn, "Int", 1)
-        DllCall("ReleaseDC", "Ptr", lineGui.Hwnd, "Ptr", hDC)
     }
 
     polyGui.Push(lineGui)
 }
-
 ; Create the multi-polygon region for the final selection
 CreateMultiPolygonRegion() {
     global dimGui, activePolygons, frame
@@ -1146,7 +1141,7 @@ ClearPolyGuis() {
     global polyGui, dimGui
 
     ; If no GUIs to clear, exit early
-    if (polyGui.Length = 0)
+    if (!IsObject(polyGui) || polyGui.Length < 1)
         return
 
     ; Disable redrawing on the screen completely
@@ -1154,7 +1149,7 @@ ClearPolyGuis() {
 
     ; Batch destroy all GUIs without showing/hiding first
     for i, gui in polyGui {
-        if (IsObject(gui) && gui.Hwnd)
+        if (IsObject(gui) && gui.HasProp("Hwnd") && gui.Hwnd)
             gui.Destroy()
     }
 
