@@ -724,6 +724,7 @@ Snip_LButtonDown(wParam, lParam, msg, hwnd) {
     global snipActive, dragStart, selectMode, polyPoints
     global toolbarDragging, toolbarGui, inToolbarArea, toolbarVisible
     global lastClickTime, clickThreshold, dimGui, polyGui
+    global activePolygons, polyRenderingComplete, canvasGui
 
     if !snipActive
         return 0
@@ -736,10 +737,11 @@ Snip_LButtonDown(wParam, lParam, msg, hwnd) {
     ; If clicks are too rapid, handle specially
     if (clickInterval < clickThreshold) {
         ; Force a small delay
-        Sleep 50
+        Sleep 100
         ; Maybe redraw the screen
         if (IsObject(dimGui) && dimGui.Hwnd)
             WinRedraw("ahk_id " dimGui.Hwnd)
+        return 0
     }
 
     ; Get the mouse coordinates from lParam
@@ -770,7 +772,7 @@ Snip_LButtonDown(wParam, lParam, msg, hwnd) {
         ; Create a small dot to mark the vertex
         local dotGui := Gui("+AlwaysOnTop -Caption +ToolWindow")
         dotGui.BackColor := "Red"
-        dotGui.Show("x" (sx - 3) " y" (sy - 3) " w6 h6")
+        dotGui.Show("x" (sx - 3) " y" (sy - 3) " w6 h6 NA")
         polyGui.Push(dotGui)
 
         ; If we have at least two points, draw the line segment
@@ -790,11 +792,44 @@ Snip_LButtonDown(wParam, lParam, msg, hwnd) {
                 FinishCurrentPolygon()
             }
         }
+
+        ; Ensure active polygons are still visible by redrawing them
+        if (activePolygons.Length > 0 && canvasGui) {
+            ; We'll draw active polygons in green on the canvas
+            hdc := DllCall("GetDC", "Ptr", canvasGui.Hwnd)
+
+            ; Create pen for drawing
+            hPen := DllCall("CreatePen", "Int", 0, "Int", 2, "UInt", 0x00FF00)  ; RGB - bright green
+            oldPen := DllCall("SelectObject", "Ptr", hdc, "Ptr", hPen)
+
+            ; Set background mode to transparent
+            oldBkMode := DllCall("SetBkMode", "Ptr", hdc, "Int", 1)  ; TRANSPARENT
+
+            ; Draw all active polygons
+            for _, polygon in activePolygons {
+                if (polygon.Length < 3)
+                    continue
+
+                ; Draw outline
+                DllCall("MoveToEx", "Ptr", hdc, "Int", polygon[1].x, "Int", polygon[1].y, "Ptr", 0)
+
+                loop polygon.Length {
+                    DllCall("LineTo", "Ptr", hdc, "Int", polygon[A_Index].x, "Int", polygon[A_Index].y)
+                }
+
+                ; Close polygon
+                DllCall("LineTo", "Ptr", hdc, "Int", polygon[1].x, "Int", polygon[1].y)
+            }
+
+            ; Clean up
+            DllCall("SelectObject", "Ptr", hdc, "Ptr", oldPen)
+            DllCall("DeleteObject", "Ptr", hPen)
+            DllCall("ReleaseDC", "Ptr", canvasGui.Hwnd, "Ptr", hdc)
+        }
     }
 
     return 0
 }
-
 ; If needed, you may also want a helper function to compute keyboard flags from wParam
 GetKeyFlags(wParam) {
     flags := {}
@@ -1138,6 +1173,8 @@ PrepareLineGui(x1, y1, x2, y2, color := "Red") {
     return lineGui
 }
 ; Colored line drawing function
+; Corrected DrawColoredLine function to ensure lines remain visible
+; Improved DrawColoredLine with better handling
 DrawColoredLine(x1, y1, x2, y2, color := "Red") {
     global polyGui
 
@@ -1155,10 +1192,10 @@ DrawColoredLine(x1, y1, x2, y2, color := "Red") {
     lineGui := Gui("+AlwaysOnTop -Caption +ToolWindow")
     lineGui.BackColor := color
 
-    ; Show first to get a handle
-    lineGui.Show("x" x " y" y " w" w " h" h " NA")
+    ; Place the GUI window first
+    lineGui.Show("x" x " y" y " w" w " h" h " Hide")
 
-    ; Create the line shape
+    ; Create the line shape if it's not just a point
     if (x1 != x2 || y1 != y2) {
         angle := ATan2(y2 - y1, x2 - x1)
         thickness := 2
@@ -1179,8 +1216,16 @@ DrawColoredLine(x1, y1, x2, y2, color := "Red") {
         NumPut("Int", Round(y1 - y - dy), points, 28)
 
         hRgn := DllCall("CreatePolygonRgn", "Ptr", points, "Int", 4, "Int", 1, "Ptr")
-        DllCall("SetWindowRgn", "Ptr", lineGui.Hwnd, "Ptr", hRgn, "Int", 1)
+        if (hRgn) {
+            DllCall("SetWindowRgn", "Ptr", lineGui.Hwnd, "Ptr", hRgn, "Int", 0)
+        }
     }
+
+    ; Now show the window after the region is set
+    lineGui.Show("NA")
+
+    ; Force a redraw
+    WinRedraw("ahk_id " . lineGui.Hwnd)
 
     polyGui.Push(lineGui)
 }
