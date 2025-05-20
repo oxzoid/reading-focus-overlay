@@ -5,6 +5,7 @@
 global blurGui := 0
 global blurOn := false
 global pToken := Gdip_Startup()
+global blurRestoreNeeded := false
 
 ToggleBlur(*) {
     global blurOn
@@ -88,12 +89,24 @@ EnsureBlurVisible(*) {
     ; Only proceed if blur should be on
     if (blurOn) {
         ; Check if the GUI still exists
-        if (IsObject(blurGui) && blurGui.Hwnd) {
-            ; Force its visibility and z-order (most important part)
+        if (IsObject(blurGui) && blurGui.HasProp("Hwnd") && blurGui.Hwnd) {
+            ; Check if window actually exists in Windows and is visible
+            if (!WinExist("ahk_id " . blurGui.Hwnd) || !DllCall("IsWindowVisible", "Ptr", blurGui.Hwnd)) {
+                ; Window doesn't exist or isn't visible - recreate
+                try blurGui.Destroy()  ; Clean up if needed
+                catch {
+                }  ; Ignore errors
+
+                blurOn := false  ; Reset state
+                ShowBlur()       ; Recreate
+                return
+            }
+
+            ; Force its visibility and z-order
             blurGui.Show("NA")  ; Show without activating
             WinSetAlwaysOnTop(true, "ahk_id " . blurGui.Hwnd)
         } else {
-            ; If GUI is gone but should be on, recreate it
+            ; GUI reference invalid - recreate it
             blurOn := false  ; Reset state
             ShowBlur()       ; Recreate
         }
