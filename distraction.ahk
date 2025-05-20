@@ -104,7 +104,6 @@ EnsureBlurVisible(*) {
 SetTimer EnsureBlurVisible, 200
 
 ; Add this hotkey to manually fix blur when needed
-Hotkey("^+b", EnsureBlurVisible)  ; Ctrl+Shift+B to manually fix
 
 ; Hotkey
 Hotkey("^+d", ToggleBlur)
