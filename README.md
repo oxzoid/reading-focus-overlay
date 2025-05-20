@@ -1,4 +1,5 @@
 # Minimalist Reading Overlay (AutoHotkey v2)
+UPDATE:no new releases after this,this will be ported to cpp for better performance and control this project is whole in itseld with ahk with only few minor things left which cannot be done easily in autohotkey and fulfils my need,see u in the new port whenever i start on it. can fix some stuff here and there if theres something majorly wrong.
 
 This tool helps you focus while reading or coding by adding:
 - A pencil-style overlay cursor
