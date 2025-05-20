@@ -554,6 +554,7 @@ IsMouseOverToolbar() {
 }
 
 ; — Snip mode —
+; In the EnterSnipMode function in focus_frame.ahk
 EnterSnipMode() {
     global snipActive, dimGui, frameGui, dimShown, polyPoints, toolbarVisible
     global activePolygons, selectMode
@@ -577,9 +578,6 @@ EnterSnipMode() {
 
     ; If starting in polygon mode, register those hotkeys
     if (selectMode = "polygon") {
-        ;Hotkey("Enter", PolygonEnterKey, "On")
-        ;Hotkey("Space", PolygonSpaceKey, "On")
-        ;Hotkey("Backspace", PolygonBackspaceKey, "On")
         Hotkey("Enter", PolygonEnterKey, "On")
         Hotkey("Space", PolygonSpaceKey, "On")
         Hotkey("Backspace", RemoveLastPoint, "On")
@@ -588,6 +586,7 @@ EnterSnipMode() {
 
     dimShown := true
 
+    ; Create dimGui as a proper GUI object
     dimGui := Gui("+AlwaysOnTop -Caption +ToolWindow")
     dimGui.BackColor := "Black"
     WinSetTransparent(DIM_DRAG, dimGui.Hwnd)     ; light dim while dragging
@@ -602,7 +601,18 @@ EnterSnipMode() {
     toolbarVisible := true
     CreateToolbar()
 
-    DllCall("SetCapture", "ptr", dimGui.Hwnd)
+    ; Check if dimGui is a valid object with an Hwnd property before using it
+    if (IsObject(dimGui) && dimGui.HasProp("Hwnd") && dimGui.Hwnd) {
+        DllCall("SetCapture", "ptr", dimGui.Hwnd)
+    } else {
+        ; If dimGui is not valid, create it again
+        dimGui := Gui("+AlwaysOnTop -Caption +ToolWindow")
+        dimGui.BackColor := "Black"
+        WinSetTransparent(DIM_DRAG, dimGui.Hwnd)
+        dimGui.Show("Maximize")
+        DllCall("SetCapture", "ptr", dimGui.Hwnd)
+    }
+
     hCur := DllCall("LoadCursorFromFile", "str", crossCur, "ptr")
     if hCur
         DllCall("SetSystemCursor", "ptr", hCur, "int", 32512)
