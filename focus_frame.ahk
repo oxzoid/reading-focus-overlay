@@ -39,8 +39,7 @@ global canvasGui := 0
 global memHDC := 0
 global memBitmap := 0
 global oldBitmap := 0
-global lastOperationTime := 0
-global throttleDelay := 100  ; Milliseconds between operations
+
 ; Math helper function
 ATan2(y, x) {
     return DllCall("msvcrt\atan2", "Double", y, "Double", x, "Double")
@@ -80,18 +79,6 @@ SetRingRegion(hwnd, w, h, t := 2) {
     DllCall("CombineRgn", "ptr", r, "ptr", o, "ptr", i, "int", 3)
     DllCall("SetWindowRgn", "ptr", hwnd, "ptr", r, "int", true)
     DllCall("DeleteObject", "ptr", o), DllCall("DeleteObject", "ptr", i)
-}
-ShouldThrottle() {
-    global lastOperationTime, throttleDelay
-    currentTime := A_TickCount
-
-    ; If not enough time has passed since last operation, throttle
-    if (currentTime - lastOperationTime < throttleDelay)
-        return true
-
-    ; Update the last operation time and allow the operation
-    lastOperationTime := currentTime
-    return false
 }
 ; Initialize GDI+ rendering system
 InitGDIPlusCanvas() {
@@ -567,7 +554,6 @@ IsMouseOverToolbar() {
 }
 
 ; — Snip mode —
-; In the EnterSnipMode function in focus_frame.ahk
 EnterSnipMode() {
     global snipActive, dimGui, frameGui, dimShown, polyPoints, toolbarVisible
     global activePolygons, selectMode
@@ -591,6 +577,9 @@ EnterSnipMode() {
 
     ; If starting in polygon mode, register those hotkeys
     if (selectMode = "polygon") {
+        ;Hotkey("Enter", PolygonEnterKey, "On")
+        ;Hotkey("Space", PolygonSpaceKey, "On")
+        ;Hotkey("Backspace", PolygonBackspaceKey, "On")
         Hotkey("Enter", PolygonEnterKey, "On")
         Hotkey("Space", PolygonSpaceKey, "On")
         Hotkey("Backspace", RemoveLastPoint, "On")
@@ -599,7 +588,6 @@ EnterSnipMode() {
 
     dimShown := true
 
-    ; Create dimGui as a proper GUI object
     dimGui := Gui("+AlwaysOnTop -Caption +ToolWindow")
     dimGui.BackColor := "Black"
     WinSetTransparent(DIM_DRAG, dimGui.Hwnd)     ; light dim while dragging
@@ -614,18 +602,7 @@ EnterSnipMode() {
     toolbarVisible := true
     CreateToolbar()
 
-    ; Check if dimGui is a valid object with an Hwnd property before using it
-    if (IsObject(dimGui) && dimGui.HasProp("Hwnd") && dimGui.Hwnd) {
-        DllCall("SetCapture", "ptr", dimGui.Hwnd)
-    } else {
-        ; If dimGui is not valid, create it again
-        dimGui := Gui("+AlwaysOnTop -Caption +ToolWindow")
-        dimGui.BackColor := "Black"
-        WinSetTransparent(DIM_DRAG, dimGui.Hwnd)
-        dimGui.Show("Maximize")
-        DllCall("SetCapture", "ptr", dimGui.Hwnd)
-    }
-
+    DllCall("SetCapture", "ptr", dimGui.Hwnd)
     hCur := DllCall("LoadCursorFromFile", "str", crossCur, "ptr")
     if hCur
         DllCall("SetSystemCursor", "ptr", hCur, "int", 32512)
@@ -701,8 +678,6 @@ Snip_MouseMove(*) {
     if !snipActive
         return 0
 
-    if (ShouldThrottle())
-        return 0
     MouseGetPos &cx, &cy
 
     ; Handle toolbar dragging
@@ -1126,8 +1101,7 @@ ShutdownPolygonCanvas() {
 RedrawExistingPolygons() {
     global activePolygons, polyGui, polyRenderingComplete, canvasGui
     global memHDC, memBitmap, oldBitmap
-    if (ShouldThrottle())
-        return
+
     ; Set flag to indicate rendering in progress
     polyRenderingComplete := false
 

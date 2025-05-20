@@ -5,7 +5,6 @@
 global blurGui := 0
 global blurOn := false
 global pToken := Gdip_Startup()
-global blurRestoreNeeded := false
 
 ToggleBlur(*) {
     global blurOn
@@ -86,32 +85,15 @@ SimulateBlur(pBitmap, w, h) {
 EnsureBlurVisible(*) {
     global blurGui, blurOn
 
-    static lastCheckTime := 0
-    currentTime := A_TickCount
-    if (currentTime - lastCheckTime < 1000)  ; Check max once per second
-        return
-    lastCheckTime := currentTime
     ; Only proceed if blur should be on
     if (blurOn) {
         ; Check if the GUI still exists
-        if (IsObject(blurGui) && blurGui.HasProp("Hwnd") && blurGui.Hwnd) {
-            ; Check if window actually exists in Windows and is visible
-            if (!WinExist("ahk_id " . blurGui.Hwnd) || !DllCall("IsWindowVisible", "Ptr", blurGui.Hwnd)) {
-                ; Window doesn't exist or isn't visible - recreate
-                try blurGui.Destroy()  ; Clean up if needed
-                catch {
-                }  ; Ignore errors
-
-                blurOn := false  ; Reset state
-                ShowBlur()       ; Recreate
-                return
-            }
-
-            ; Force its visibility and z-order
+        if (IsObject(blurGui) && blurGui.Hwnd) {
+            ; Force its visibility and z-order (most important part)
             blurGui.Show("NA")  ; Show without activating
             WinSetAlwaysOnTop(true, "ahk_id " . blurGui.Hwnd)
         } else {
-            ; GUI reference invalid - recreate it
+            ; If GUI is gone but should be on, recreate it
             blurOn := false  ; Reset state
             ShowBlur()       ; Recreate
         }
@@ -119,7 +101,7 @@ EnsureBlurVisible(*) {
 }
 
 ; Set timer to periodically check blur visibility
-SetTimer EnsureBlurVisible, 600
+SetTimer EnsureBlurVisible, 200
 
 ; Add this hotkey to manually fix blur when needed
 Hotkey("^+b", EnsureBlurVisible)  ; Ctrl+Shift+B to manually fix
