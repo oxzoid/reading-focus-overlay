@@ -39,7 +39,8 @@ global canvasGui := 0
 global memHDC := 0
 global memBitmap := 0
 global oldBitmap := 0
-
+global lastOperationTime := 0
+global throttleDelay := 100  ; Milliseconds between operations
 ; Math helper function
 ATan2(y, x) {
     return DllCall("msvcrt\atan2", "Double", y, "Double", x, "Double")
@@ -79,6 +80,18 @@ SetRingRegion(hwnd, w, h, t := 2) {
     DllCall("CombineRgn", "ptr", r, "ptr", o, "ptr", i, "int", 3)
     DllCall("SetWindowRgn", "ptr", hwnd, "ptr", r, "int", true)
     DllCall("DeleteObject", "ptr", o), DllCall("DeleteObject", "ptr", i)
+}
+ShouldThrottle() {
+    global lastOperationTime, throttleDelay
+    currentTime := A_TickCount
+
+    ; If not enough time has passed since last operation, throttle
+    if (currentTime - lastOperationTime < throttleDelay)
+        return true
+
+    ; Update the last operation time and allow the operation
+    lastOperationTime := currentTime
+    return false
 }
 ; Initialize GDI+ rendering system
 InitGDIPlusCanvas() {
@@ -688,6 +701,8 @@ Snip_MouseMove(*) {
     if !snipActive
         return 0
 
+    if (ShouldThrottle())
+        return 0
     MouseGetPos &cx, &cy
 
     ; Handle toolbar dragging
@@ -1111,7 +1126,8 @@ ShutdownPolygonCanvas() {
 RedrawExistingPolygons() {
     global activePolygons, polyGui, polyRenderingComplete, canvasGui
     global memHDC, memBitmap, oldBitmap
-
+    if (ShouldThrottle())
+        return
     ; Set flag to indicate rendering in progress
     polyRenderingComplete := false
 

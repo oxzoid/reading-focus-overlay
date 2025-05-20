@@ -86,6 +86,11 @@ SimulateBlur(pBitmap, w, h) {
 EnsureBlurVisible(*) {
     global blurGui, blurOn
 
+    static lastCheckTime := 0
+    currentTime := A_TickCount
+    if (currentTime - lastCheckTime < 1000)  ; Check max once per second
+        return
+    lastCheckTime := currentTime
     ; Only proceed if blur should be on
     if (blurOn) {
         ; Check if the GUI still exists
@@ -114,7 +119,7 @@ EnsureBlurVisible(*) {
 }
 
 ; Set timer to periodically check blur visibility
-SetTimer EnsureBlurVisible, 200
+SetTimer EnsureBlurVisible, 600
 
 ; Add this hotkey to manually fix blur when needed
 Hotkey("^+b", EnsureBlurVisible)  ; Ctrl+Shift+B to manually fix
