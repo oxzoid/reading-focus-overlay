@@ -82,6 +82,29 @@ SimulateBlur(pBitmap, w, h) {
     Gdip_DisposeImage(scaled)
     return final
 }
+EnsureBlurVisible(*) {
+    global blurGui, blurOn
+
+    ; Only proceed if blur should be on
+    if (blurOn) {
+        ; Check if the GUI still exists
+        if (IsObject(blurGui) && blurGui.Hwnd) {
+            ; Force its visibility and z-order (most important part)
+            blurGui.Show("NA")  ; Show without activating
+            WinSetAlwaysOnTop(true, "ahk_id " . blurGui.Hwnd)
+        } else {
+            ; If GUI is gone but should be on, recreate it
+            blurOn := false  ; Reset state
+            ShowBlur()       ; Recreate
+        }
+    }
+}
+
+; Set timer to periodically check blur visibility
+SetTimer EnsureBlurVisible, 200
+
+; Add this hotkey to manually fix blur when needed
+Hotkey("^+b", EnsureBlurVisible)  ; Ctrl+Shift+B to manually fix
 
 ; Hotkey
 Hotkey("^+d", ToggleBlur)
