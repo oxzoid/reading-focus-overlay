@@ -5,7 +5,7 @@ This tool helps you focus while reading or coding by adding:
 - A click blocker to prevent distractions
 - A blur overlay for the taskbar or screen
 - A focus frame that dims everything except selected areas
-- 
+  
 ## Recommended Workflow
 Recommended tools for reading with:
 - [ppInk](https://github.com/pubpub-zz/ppInk) - Screenshot annotation for capturing insights for a quick second to understand stuff
