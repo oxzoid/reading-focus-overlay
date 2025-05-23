@@ -5,6 +5,15 @@ This tool helps you focus while reading or coding by adding:
 - A click blocker to prevent distractions
 - A blur overlay for the taskbar or screen
 - A focus frame that dims everything except selected areas
+- 
+## Recommended Workflow
+Recommended tools for reading with:
+- [ppInk](https://github.com/pubpub-zz/ppInk) - Screenshot annotation for capturing insights for a quick second to understand stuff
+- [ShareX](https://getsharex.com/) - for the same reason as above great tool in general as well,ur choice. use both i would say
+- Any pomodoro timer - Session management and focus structuring
+- will recommend taking notes by hands i.e. paper or ipad than typing for learning but this is just my opinion,take it with a grain of salt
+
+**Typical session:** Start timer → Enable focus frame → Read without distractions → Capture key insights with ppInk/sharex → Repeat
 
 ## How to Use
 
